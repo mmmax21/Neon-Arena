@@ -4,7 +4,17 @@
     "width": 1280,
     "height": 720
   },
-  "nodes": [],
+  "nodes": [
+    {
+      "id": "gdd-doc",
+      "type": "document",
+      "title": "Neon Arena 游戏设计文档",
+      "description": "主设计文档：玩法、数值、敌人、波次、界面、美术、音效、技术实现与后续规划，以当前代码实现为准。",
+      "data": {
+        "documentId": "gdd"
+      }
+    }
+  ],
   "edges": [],
   "id": "136c10b0-7816-412b-90a7-5b954f4b7642"
 }

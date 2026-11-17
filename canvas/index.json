@@ -6,5 +6,11 @@
       "name": "Untitled"
     }
   ],
-  "documents": []
+  "documents": [
+    {
+      "id": "gdd",
+      "title": "Neon Arena 游戏设计文档"
+    }
+  ],
+  "mainDocumentId": "gdd"
 }

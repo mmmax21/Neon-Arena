@@ -20,7 +20,15 @@ func _ready() -> void:
 	sounds["dash"] = _make(0.14, 200, 900, "sine", 0.5, 0.3)
 	sounds["spawn"] = _make(0.2, 900, 1100, "sine", 0.0, 0.12)
 	sounds["clear"] = _make(0.45, 500, 1600, "square", 0.0, 0.25)
-	for i in 14:
+	sounds["shotgun"] = _make(0.16, 520, 110, "square", 0.75, 0.3)
+	sounds["laser"] = _make(0.16, 1900, 320, "saw", 0.15, 0.2)
+	sounds["charge"] = _make(0.5, 220, 950, "sine", 0.1, 0.16)
+	sounds["beam"] = _make(0.35, 170, 90, "saw", 0.5, 0.3)
+	sounds["shield"] = _make(0.3, 1300, 300, "sine", 0.3, 0.35)
+	sounds["beep"] = _make(0.09, 1500, 1500, "square", 0.0, 0.14)
+	sounds["card"] = _make(0.3, 400, 1300, "square", 0.0, 0.2)
+	sounds["shock"] = _make(0.35, 320, 60, "sine", 0.6, 0.4)
+	for i in 16:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
 		players.append(p)
