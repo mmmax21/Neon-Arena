@@ -13,7 +13,9 @@ const ICON := 30.0
 const ICON_GAP := 5.0
 const ICONS_PER_ROW := 6
 const HUD_X := 44.0
-const LANG_BUTTONS := {"en": Rect2(1030, 44, 96, 34), "zh": Rect2(1134, 44, 96, 34)}
+const LANG_BUTTONS := {"en": Rect2(986, 44, 96, 34), "zh": Rect2(1090, 44, 96, 34)}
+## Mute toggle, same spot on every screen (top-right corner).
+const MUTE_RECT := Rect2(1198, 42, 38, 38)
 
 var main: Node2D
 var announce_text := ""
@@ -79,6 +81,60 @@ func card_at(pos: Vector2) -> int:
 	return -1
 
 
+func mute_at(pos: Vector2) -> bool:
+	return MUTE_RECT.has_point(pos)
+
+
+func _draw_mute_button() -> void:
+	var r := MUTE_RECT
+	var hot := r.has_point(main.pointer_pos())
+	var col := Color(1, 0.45, 0.5) if main.muted else Color(0.4, 0.95, 1)
+	draw_rect(r, Color(0.03, 0.04, 0.09, 0.85))
+	draw_rect(r, Color(col, 0.18 if hot else 0.08))
+	draw_rect(r, Color(col, 0.9 if hot else 0.5), false, 2.0)
+	Icons.draw(self, "sound_off" if main.muted else "sound_on", r.get_center(), 12.0, col)
+	if hot:
+		var label: String = main.t("mute_on") if main.muted else main.t("mute_off")
+		if _touch():
+			label = label.replace("  (M)", "").replace("（M）", "")
+		var w := _font().get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 20
+		var box := Rect2(r.end.x - w, r.end.y + 6, w, 26)
+		draw_rect(box, Color(0.02, 0.03, 0.07, 0.95))
+		draw_rect(box, Color(col, 0.8), false, 1.5)
+		_text(label, box.position + Vector2(0, 18), 14, Color(col, 0.95), HORIZONTAL_ALIGNMENT_CENTER, w)
+
+
+func _touch() -> bool:
+	return main.touch != null and main.touch.active
+
+
+## Touch control-mode button (title and pause screens, touch mode only).
+func ctrl_rect() -> Rect2:
+	if main.state == TITLE:
+		return Rect2(986, 88, 200, 34)
+	if main.state == PAUSED:
+		return Rect2(size.x / 2 - 130, size.y * 0.45 + 70, 260, 42)
+	return Rect2()
+
+
+func ctrl_at(pos: Vector2) -> bool:
+	var r := ctrl_rect()
+	return r.size.x > 0 and r.has_point(pos)
+
+
+func _draw_ctrl_button() -> void:
+	var r := ctrl_rect()
+	if r.size.x <= 0:
+		return
+	var col := Color(1, 0.85, 0.35)
+	var hot := r.has_point(main.pointer_pos())
+	draw_rect(r, Color(0.03, 0.04, 0.09, 0.9))
+	draw_rect(r, Color(col, 0.2 if hot else 0.08))
+	draw_rect(r, Color(col, 0.9 if hot else 0.6), false, 2.0)
+	var label: String = main.t("ctrl_mode") % main.t("mode_" + main.touch.mode)
+	_text(label, r.position + Vector2(0, r.size.y / 2 + 6), 17, col, HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+
+
 func lang_at(pos: Vector2) -> String:
 	for l in LANG_BUTTONS:
 		if LANG_BUTTONS[l].has_point(pos):
@@ -91,7 +147,7 @@ func _draw_cards(title: String, subtitle: String) -> void:
 	_center(title, size.y * 0.5 - CARD_H / 2.0 - 34, 44, Color(0.4, 0.95, 1))
 	_center(subtitle, size.y * 0.5 - CARD_H / 2.0 + 2, 18, Color(1, 1, 1, 0.7))
 	var rects := card_rects(cards.size())
-	var hover := card_at(get_local_mouse_position())
+	var hover := card_at(main.pointer_pos())
 	var locked: bool = main.card_lock > 0
 	for i in cards.size():
 		var c: Dictionary = cards[i]
@@ -116,7 +172,8 @@ func _draw_cards(title: String, subtitle: String) -> void:
 			ly += 25
 		if c["level"] != "":
 			_text(c["level"], Vector2(r.position.x, r.end.y - 46), 16, Color(col, 0.9), HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
-		_text("[%d]" % (i + 1), Vector2(r.position.x, r.end.y - 16), 16, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
+		if not _touch():
+			_text("[%d]" % (i + 1), Vector2(r.position.x, r.end.y - 16), 16, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, r.size.x)
 
 
 # ---------------------------------------------------------------- icons
@@ -131,7 +188,7 @@ func _icon_box(id: String, r: Rect2, col: Color, badge: String, tip_title: Strin
 		var bp := r.end - Vector2(11, 1)
 		draw_rect(Rect2(bp - Vector2(1, 11), Vector2(12, 12)), Color(0, 0, 0, 0.75))
 		_text(badge, bp + Vector2(0, -1), 11, Color(1, 1, 1, 0.95), HORIZONTAL_ALIGNMENT_LEFT, -1, ThemeDB.fallback_font)
-	if r.has_point(get_local_mouse_position()):
+	if r.has_point(main.pointer_pos()):
 		draw_rect(r.grow(2), Color(col, 0.9), false, 1.5)
 		tooltip = {"pos": tip_pos, "title": tip_title, "body": tip_body, "color": col}
 
@@ -192,21 +249,28 @@ func _draw() -> void:
 		_draw_title()
 	elif main.state == SELECT:
 		draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0.02, 0.7))
-		_draw_cards(main.t("choose_weapon"), main.t("choose_weapon_sub"))
+		_draw_cards(main.t("choose_weapon"), main.t("choose_weapon_sub_t" if _touch() else "choose_weapon_sub"))
 	else:
 		_draw_game_hud()
 		if main.state == UPGRADE:
 			tooltip = {}
 			draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0.02, 0.65))
-			_draw_cards(main.t("wave_cleared") % main.wave, main.t("choose_upgrade_sub"))
+			_draw_cards(main.t("wave_cleared") % main.wave, main.t("choose_upgrade_sub_t" if _touch() else "choose_upgrade_sub"))
 		elif main.state == PAUSED:
 			draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, 0.55))
 			_center(main.t("paused"), size.y * 0.45, 56, Color(0.4, 0.95, 1))
-			_center(main.t("resume"), size.y * 0.45 + 50, 20, Color(1, 1, 1, 0.8))
-			_center(main.t("lang_hint"), size.y * 0.45 + 84, 16, Color(1, 1, 1, 0.5))
+			if _touch():
+				_center(main.t("resume_t"), size.y * 0.45 + 50, 20, Color(1, 1, 1, 0.8))
+				_draw_ctrl_button()
+				_center(main.t("mode_" + main.touch.mode + "_d"), size.y * 0.45 + 140, 16, Color(1, 1, 1, 0.55))
+				_center(main.t("icon_hint_t"), size.y * 0.45 + 166, 15, Color(1, 1, 1, 0.4))
+			else:
+				_center(main.t("resume"), size.y * 0.45 + 50, 20, Color(1, 1, 1, 0.8))
+				_center(main.t("lang_hint"), size.y * 0.45 + 84, 16, Color(1, 1, 1, 0.5))
 		elif main.state == GAMEOVER:
 			tooltip = {}
 			_draw_gameover()
+	_draw_mute_button()
 	_draw_tooltip()
 	_draw_crosshair()
 
@@ -217,16 +281,19 @@ func _draw_title() -> void:
 	_text("NEON ARENA", Vector2(0, size.y * 0.32), 88, Color(0.35, 0.95, 1, glow), HORIZONTAL_ALIGNMENT_CENTER, size.x, ThemeDB.fallback_font)
 	_center(main.t("title_sub"), size.y * 0.32 + 44, 22, Color(1, 0.4, 0.7, 0.9))
 	var y := size.y * 0.52
-	for k in ["ctl_move", "ctl_aim", "ctl_dash", "ctl_pause", "", "ctl_build"]:
+	var lines := ["ctl_move", "ctl_aim", "ctl_dash", "ctl_pause", "", "ctl_build"]
+	if _touch():
+		lines = ["ctl_t_move", "mode_" + main.touch.mode + "_d", "ctl_t_dash", "ctl_t_pause", "", "ctl_build"]
+	for k in lines:
 		if k != "":
 			_center(main.t(k), y, 20, Color(0.85, 0.9, 1, 0.85))
 		y += 30
 	if int(t * 2) % 2 == 0:
-		_center(main.t("click_start"), size.y * 0.84, 32, Color(1, 0.9, 0.35))
+		_center(main.t("tap_start" if _touch() else "click_start"), size.y * 0.84, 32, Color(1, 0.9, 0.35))
 	if main.best > 0:
 		_center(main.t("best_title") % main.best, size.y * 0.92, 20, Color(1, 1, 1, 0.6))
 	# Language toggle; each label is drawn in its own script's font.
-	var m := get_local_mouse_position()
+	var m: Vector2 = main.pointer_pos()
 	for l in LANG_BUTTONS:
 		var r: Rect2 = LANG_BUTTONS[l]
 		var on: bool = main.lang == l
@@ -236,7 +303,10 @@ func _draw_title() -> void:
 		var label := "English" if l == "en" else "中文"
 		var f: Font = ThemeDB.fallback_font if l == "en" else main.FONT_ZH
 		_text(label, r.position + Vector2(0, 24), 17, col, HORIZONTAL_ALIGNMENT_CENTER, r.size.x, f)
-	_text(main.t("lang_hint"), Vector2(1030, 100), 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, 200)
+	if _touch():
+		_draw_ctrl_button()
+	else:
+		_text(main.t("lang_hint"), Vector2(936, 100), 13, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_CENTER, 200)
 	_text("v" + main.VERSION, Vector2(size.x - 244, size.y - 44), 14, Color(1, 1, 1, 0.35), HORIZONTAL_ALIGNMENT_RIGHT, 200, ThemeDB.fallback_font)
 
 
@@ -266,11 +336,12 @@ func _draw_game_hud() -> void:
 			_text(main.t("barrier_t") % ceili(pl.shield_cd), Vector2(HUD_X, info_y), 14, Color(0.6, 0.95, 1, 0.8))
 	_center(main.t("wave") % main.wave, 66, 26, Color(0.4, 0.95, 1, 0.9))
 	_draw_upgrade_meter(Vector2(size.x / 2, 86))
-	_text("%d" % main.score, Vector2(size.x - 344, 66), 30, Color(1, 1, 1), HORIZONTAL_ALIGNMENT_RIGHT, 300, ThemeDB.fallback_font)
-	_text(main.t("best_hud") % maxi(main.best, main.score), Vector2(size.x - 344, 90), 15, Color(1, 1, 1, 0.5), HORIZONTAL_ALIGNMENT_RIGHT, 300)
+	_center(main.t("arena_label") % main.t("arena_" + main.arena.layout), 112, 13, Color(1, 0.85, 0.35, 0.55))
+	_text("%d" % main.score, Vector2(size.x - 394, 66), 30, Color(1, 1, 1), HORIZONTAL_ALIGNMENT_RIGHT, 300, ThemeDB.fallback_font)
+	_text(main.t("best_hud") % maxi(main.best, main.score), Vector2(size.x - 394, 90), 15, Color(1, 1, 1, 0.5), HORIZONTAL_ALIGNMENT_RIGHT, 300)
 	if main.combo >= 2:
 		var ck: float = clampf(main.combo_timer / 2.5, 0, 1)
-		_text(main.t("combo") % main.combo, Vector2(size.x - 344, 118), 20, Color(1, 0.5, 0.8, 0.4 + ck * 0.6), HORIZONTAL_ALIGNMENT_RIGHT, 300)
+		_text(main.t("combo") % main.combo, Vector2(size.x - 394, 118), 20, Color(1, 0.5, 0.8, 0.4 + ck * 0.6), HORIZONTAL_ALIGNMENT_RIGHT, 300)
 	# Boss bar
 	var b = main.boss
 	if b and is_instance_valid(b) and not b.dead:
@@ -322,11 +393,13 @@ func _draw_gameover() -> void:
 	if main.player and a >= 1.0:
 		_draw_build(0, size.y * 0.34 + 150, 16, true)
 	if main.gameover_timer > 0.8 and int(t * 2) % 2 == 0:
-		_center(main.t("retry"), size.y * 0.76, 24, Color(1, 0.9, 0.35))
+		_center(main.t("retry_t" if _touch() else "retry"), size.y * 0.76, 24, Color(1, 0.9, 0.35))
 
 
 func _draw_crosshair() -> void:
-	var m := get_local_mouse_position()
+	if _touch():
+		return
+	var m: Vector2 = main.pointer_pos()
 	var c := Color(1, 0.95, 0.5, 0.95)
 	draw_arc(m, 10, 0, TAU, 24, c, 2.0, true)
 	for d in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN]:

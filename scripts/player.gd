@@ -1,5 +1,6 @@
 extends Node2D
 ## Player ship: WASD move, mouse aim, hold LMB to fire, Space/Shift/RMB to dash.
+## On touch screens touch.gd supplies movement, aim, firing and dash instead.
 ## Holds the chosen weapon and upgrade levels; main.gd applies them to shots and hits.
 
 const DASH_CD := 1.0
@@ -101,14 +102,23 @@ func update(delta: float) -> void:
 			main.fx.ring(position, 50, Color(0.6, 0.95, 1), 0.35)
 			main.sfx.play("pickup")
 	var mv := move_input()
-	var to_mouse := get_global_mouse_position() - position
-	if to_mouse.length() > 4:
-		aim = to_mouse.normalized()
+	var touch = main.touch
+	var touch_fire := false
+	if touch.active:
+		var tm: Vector2 = touch.move_vector()
+		if tm != Vector2.ZERO:
+			mv = tm
+		touch_fire = touch.steer(self, delta)
+	else:
+		var to_mouse := get_global_mouse_position() - position
+		if to_mouse.length() > 4:
+			aim = to_mouse.normalized()
 
-	var dash_now := Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_SHIFT) \
-		or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
-	if dash_now and not dash_held and dash_cd <= 0 and dash_t <= 0:
-		start_dash(mv if mv != Vector2.ZERO else aim)
+	var dash_now: bool = Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_SHIFT) \
+		or (Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not touch.active)
+	if ((dash_now and not dash_held) or touch.dash_buf > 0) and dash_cd <= 0 and dash_t <= 0:
+		touch.dash_buf = 0.0
+		start_dash(mv.normalized() if mv != Vector2.ZERO else aim)
 	dash_held = dash_now
 
 	if dash_t > 0:
@@ -132,7 +142,8 @@ func update(delta: float) -> void:
 
 	position = main.resolve_static(position + vel * delta, radius)
 
-	if (Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or fire_queued) and fire_cd <= 0:
+	var mouse_fire: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not touch.active
+	if (mouse_fire or fire_queued or touch_fire) and fire_cd <= 0:
 		fire_queued = false
 		shoot()
 	queue_redraw()

@@ -2,6 +2,7 @@ extends Node2D
 ## Lightweight particle / ring / floating-text effects, plus spawn warnings.
 
 const MAX_PARTS := 900
+const MAX_PARTS_TOUCH := 500  # phones get a lower cap
 
 var main: Node2D
 var parts: Array = []   # {p, v, life, m, c, s, drag}
@@ -19,7 +20,7 @@ func clear() -> void:
 
 
 func _add(d: Dictionary) -> void:
-	if parts.size() >= MAX_PARTS:
+	if parts.size() >= (MAX_PARTS_TOUCH if main.touch and main.touch.active else MAX_PARTS):
 		parts.pop_front()
 	parts.append(d)
 

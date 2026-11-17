@@ -125,5 +125,17 @@ static func draw(ci: CanvasItem, id: String, c: Vector2, s: float, col: Color) -
 			ci.draw_colored_polygon(star, Color(col, 0.35))
 			star.append(star[0])
 			ci.draw_polyline(star, col, w, true)
+		"sound_on", "sound_off":
+			var spk := PackedVector2Array([Vector2(-0.9, -0.3), Vector2(-0.45, -0.3), Vector2(0.05, -0.8),
+				Vector2(0.05, 0.8), Vector2(-0.45, 0.3), Vector2(-0.9, 0.3)])
+			for i in spk.size():
+				spk[i] = c + spk[i] * s
+			ci.draw_colored_polygon(spk, col)
+			if id == "sound_on":
+				ci.draw_arc(c + Vector2(s * 0.1, 0), s * 0.45, -0.85, 0.85, 10, col, w, true)
+				ci.draw_arc(c + Vector2(s * 0.1, 0), s * 0.85, -0.85, 0.85, 12, Color(col, 0.7), w, true)
+			else:
+				ci.draw_line(c + Vector2(s * 0.3, -s * 0.4), c + Vector2(s * 0.95, s * 0.4), col, w * 1.2, true)
+				ci.draw_line(c + Vector2(s * 0.3, s * 0.4), c + Vector2(s * 0.95, -s * 0.4), col, w * 1.2, true)
 		_:
 			ci.draw_circle(c, s * 0.5, col)

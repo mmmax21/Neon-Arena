@@ -8,13 +8,15 @@ const PickupScript := preload("res://scripts/pickup.gd")
 const FxScript := preload("res://scripts/fx.gd")
 const HudScript := preload("res://scripts/hud.gd")
 const SfxScript := preload("res://scripts/sfx.gd")
+const ArenaScript := preload("res://scripts/arena.gd")
+const TouchScript := preload("res://scripts/touch.gd")
 const I18n := preload("res://scripts/i18n.gd")
 const FONT_ZH := preload("res://fonts/NotoSansSC-Medium.subset.otf")
 
 const W := 1280.0
 const H := 720.0
 const ARENA := Rect2(30, 30, 1220, 660)
-const VERSION := "2.0"
+const VERSION := "2.1"
 ## v1 stored its best score in user://best.save; v2 keeps its own so the two web builds don't mix scores.
 const SAVE_PATH := "user://best_v2.save"
 const SETTINGS_PATH := "user://settings.cfg"
@@ -72,7 +74,8 @@ var pickups: Array = []
 var new_enemies: Array = []
 var new_bullets: Array = []
 var hazards: Array = []  # {p, life, tick}
-var obstacles: Array[Vector3] = []  # x, y, radius
+var obstacles: Array[Vector3] = []  # x, y, radius; rebuilt by arena.gd from solid pillars / crystals
+var ray_hit := -1  # obstacle index hit by the last cast_ray, or -1
 var spawn_queue: Array[String] = []
 var spawn_markers: Array = []  # {p: Vector2, type: String, t: float, elite: String}
 var spawn_timer := 0.0
@@ -93,13 +96,17 @@ var time_alive := 0.0
 var boss: Node2D = null
 var waves_since_upgrade := 0
 var lang := "en"
+var muted := false
+var touch_mode_setting := "hybrid"
 
+var arena: Node2D
 var layer_pickups: Node2D
 var layer_enemies: Node2D
 var layer_bullets: Node2D
 var layer_player: Node2D
 var fx: Node2D
 var hud: Control
+var touch: Control
 var sfx: Node
 var camera: Camera2D
 
@@ -112,6 +119,9 @@ func _ready() -> void:
 	camera.position = Vector2(W / 2, H / 2)
 	add_child(camera)
 	camera.make_current()
+	arena = ArenaScript.new()
+	arena.main = self
+	add_child(arena)  # first child: drawn above the floor, below everything else
 	layer_pickups = _make_layer("Pickups")
 	layer_enemies = _make_layer("Enemies")
 	layer_player = _make_layer("Player")
@@ -127,8 +137,13 @@ func _ready() -> void:
 	hud.main = self
 	cl.add_child(hud)
 	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	touch = TouchScript.new()
+	touch.main = self
+	cl.add_child(touch)
+	touch.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	touch.set_mode(touch_mode_setting)
 	Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
-	build_obstacles()
+	arena.reset()
 	queue_redraw()
 
 
@@ -137,16 +152,6 @@ func _make_layer(n: String) -> Node2D:
 	l.name = n
 	add_child(l)
 	return l
-
-
-func build_obstacles() -> void:
-	obstacles.clear()
-	obstacles.append(Vector3(300, 210, 42))
-	obstacles.append(Vector3(980, 210, 42))
-	obstacles.append(Vector3(300, 510, 42))
-	obstacles.append(Vector3(980, 510, 42))
-	obstacles.append(Vector3(640, 140, 28))
-	obstacles.append(Vector3(640, 580, 28))
 
 
 # ---------------------------------------------------------------- flow
@@ -170,6 +175,8 @@ func start_game() -> void:
 	spawn_markers.clear()
 	offer.clear()
 	fx.clear()
+	arena.reset()
+	touch.reset()
 	player = PlayerScript.new()
 	player.main = self
 	player.weapon = weapon
@@ -203,13 +210,11 @@ func on_player_dead() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		press_at(hud.get_local_mouse_position())
+		return
 	var confirm := false
 	var pick := -1
-	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		confirm = true
-		pick = hud.card_at(hud.get_local_mouse_position())
-		if state == State.PLAYING and player:
-			player.fire_queued = true
 	if event is InputEventKey and event.pressed and not event.echo:
 		var k: int = event.physical_keycode
 		if k == KEY_ENTER or k == KEY_KP_ENTER:
@@ -228,6 +233,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			elif state == State.SELECT and k == KEY_ESCAPE:
 				state = State.TITLE
 				return
+		if k == KEY_M:
+			set_muted(not muted)
+			return
 		if k == KEY_L:
 			set_lang(LANGS[(LANGS.find(lang) + 1) % LANGS.size()])
 			return
@@ -236,11 +244,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 	match state:
 		State.TITLE:
-			if event is InputEventMouseButton and confirm:
-				var l: String = hud.lang_at(hud.get_local_mouse_position())
-				if l != "":
-					set_lang(l)
-					return
 			if confirm:
 				open_select()
 		State.SELECT:
@@ -256,6 +259,46 @@ func _unhandled_input(event: InputEvent) -> void:
 		State.PAUSED:
 			if confirm:
 				state = State.PLAYING
+
+
+## A left click, or a touch tap outside play (touch.gd sends those on release).
+func press_at(pos: Vector2) -> void:
+	if hud.mute_at(pos):
+		set_muted(not muted)
+		return
+	if touch.active and hud.ctrl_at(pos):
+		touch.cycle_mode()
+		return
+	var pick: int = hud.card_at(pos)
+	match state:
+		State.TITLE:
+			var l: String = hud.lang_at(pos)
+			if l != "":
+				set_lang(l)
+			else:
+				open_select()
+		State.SELECT:
+			if pick >= 0 and card_lock <= 0:
+				weapon = WEAPON_ORDER[pick]
+				start_game()
+		State.UPGRADE:
+			if pick >= 0 and pick < offer.size() and card_lock <= 0:
+				choose_upgrade(pick)
+		State.GAMEOVER:
+			if gameover_timer > 0.8:
+				open_select()
+		State.PAUSED:
+			state = State.PLAYING
+		State.PLAYING:
+			if player:
+				player.fire_queued = true
+
+
+## Where the HUD treats the pointer as being: the mouse, or a held touch in touch mode.
+func pointer_pos() -> Vector2:
+	if touch and touch.active:
+		return touch.hover_pos()
+	return hud.get_local_mouse_position()
 
 
 func _notification(what: int) -> void:
@@ -283,6 +326,7 @@ func _process(delta: float) -> void:
 func update_game(delta: float) -> void:
 	time_alive += delta
 	player.update(delta)
+	arena.update(delta)
 	_update_waves(delta)
 	for e in enemies:
 		if not e.dead:
@@ -413,7 +457,7 @@ func _find_spawn_point() -> Vector2:
 		var p := Vector2(
 			randf_range(ARENA.position.x + 50, ARENA.end.x - 50),
 			randf_range(ARENA.position.y + 50, ARENA.end.y - 50))
-		if p.distance_to(player.position) < 300:
+		if p.distance_to(player.position) < 300 or arena.near_portal(p, 50):
 			continue
 		if _clear_of_obstacles(p, 60):
 			return p
@@ -513,11 +557,14 @@ func choose_upgrade(i: int) -> void:
 		player.add_upgrade(id)
 	fx.ring(player.position, 80, info["color"], 0.4)
 	fx.text(player.position, info["name"], info["color"])
-	hud.announce(info["name"], info["color"])
 	sfx.play("pickup")
 	offer.clear()
 	state = State.PLAYING
-	intermission = 1.4
+	# Every upgrade also reshapes the arena; the extra pause covers the warn + rise.
+	var next: String = arena.shift_next()
+	hud.announce(t("arena_shift") % t("arena_" + next), Color(1, 0.85, 0.35))
+	sfx.play("charge")
+	intermission = 2.6
 
 
 ## Display data for an upgrade card.
@@ -581,9 +628,22 @@ func set_lang(l: String) -> void:
 		return
 	lang = l
 	sfx.play("card")
+	_save_setting("ui", "lang", lang)
+
+
+## Mutes every sound through the master bus.
+func set_muted(m: bool) -> void:
+	muted = m
+	AudioServer.set_bus_mute(0, muted)
+	if not muted:
+		sfx.play("pickup")
+	_save_setting("audio", "muted", muted)
+
+
+func _save_setting(section: String, key: String, value: Variant) -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(SETTINGS_PATH)
-	cfg.set_value("ui", "lang", lang)
+	cfg.set_value(section, key, value)
 	cfg.save(SETTINGS_PATH)
 
 
@@ -592,6 +652,9 @@ func load_settings() -> void:
 	var default_lang := "zh" if OS.get_locale_language() == "zh" else "en"
 	if cfg.load(SETTINGS_PATH) == OK:
 		lang = String(cfg.get_value("ui", "lang", default_lang))
+		muted = bool(cfg.get_value("audio", "muted", false))
+		touch_mode_setting = String(cfg.get_value("input", "touch_mode", "hybrid"))
+		AudioServer.set_bus_mute(0, muted)
 	else:
 		lang = default_lang
 	if not LANGS.has(lang):
@@ -648,13 +711,16 @@ func _update_bullets(delta: float) -> void:
 			else:
 				b.dead = true
 			continue
-		var ob := _obstacle_at(p, b.radius)
-		if ob.z > 0:
+		var oi := _obstacle_at(p, b.radius)
+		if oi >= 0:
+			var ob: Vector3 = obstacles[oi]
 			if b.from_player and b.bounce > 0:
 				_bounce_off(b, Vector2(ob.x, ob.y), ob.z + b.radius)
 			else:
 				b.dead = true
 				fx.burst(p, b.color, 5, 160, 2.5, 0.25)
+			# Crystals crack under any fire, including enemy bullets.
+			arena.damage_block(oi, b.damage if b.from_player else 1.0)
 			continue
 		if b.from_player:
 			_player_bullet_hits(b, p)
@@ -745,6 +811,7 @@ func _after_bounce(b: Node2D) -> void:
 ## Hitscan laser: pierces every enemy up to the first pillar, wall or snake body.
 func fire_laser(o: Vector2, d: Vector2, dmg: float, c: Color) -> void:
 	var length := cast_ray(o, d, 1600.0)
+	var wall_hit := ray_hit
 	for e in enemies:
 		if e.dead or e.type != "snake":
 			continue
@@ -752,6 +819,7 @@ func fire_laser(o: Vector2, d: Vector2, dmg: float, c: Color) -> void:
 			var tt := _ray_circle(o, d, s, SEG_RADIUS)
 			if tt >= 0.0 and tt < length:
 				length = tt
+				wall_hit = -1
 	var end := o + d * length
 	for e in enemies:
 		if e.dead:
@@ -763,6 +831,7 @@ func fire_laser(o: Vector2, d: Vector2, dmg: float, c: Color) -> void:
 				_spawn_shards(cp, d, dmg, c, e.get_instance_id())
 	fx.beam(o, end, c, 7.0, 0.14)
 	fx.burst(end, c, 6, 200, 2.5, 0.25)
+	arena.damage_block(wall_hit, dmg)
 
 
 ## Distance along a ray to a circle, or -1 if it misses.
@@ -781,6 +850,7 @@ func _ray_circle(o: Vector2, d: Vector2, c: Vector2, r: float) -> float:
 ## Distance from o along unit direction d to the first pillar or arena wall.
 func cast_ray(o: Vector2, d: Vector2, max_len: float) -> float:
 	var best_t := max_len
+	ray_hit = -1
 	if d.x > 0.0001:
 		best_t = minf(best_t, (ARENA.end.x - o.x) / d.x)
 	elif d.x < -0.0001:
@@ -789,10 +859,12 @@ func cast_ray(o: Vector2, d: Vector2, max_len: float) -> float:
 		best_t = minf(best_t, (ARENA.end.y - o.y) / d.y)
 	elif d.y < -0.0001:
 		best_t = minf(best_t, (ARENA.position.y - o.y) / d.y)
-	for ob in obstacles:
+	for i in obstacles.size():
+		var ob: Vector3 = obstacles[i]
 		var tt := _ray_circle(o, d, Vector2(ob.x, ob.y), ob.z)
 		if tt > 0.0 and tt < best_t:
 			best_t = tt
+			ray_hit = i
 	return maxf(best_t, 0.0)
 
 
@@ -887,6 +959,7 @@ func explode(p: Vector2, r: float, enemy_dmg: float, hurt_player: bool) -> void:
 	fx.ring(p, r * 1.2, Color(1, 0.45, 0.3), 0.4)
 	sfx.play("explode")
 	add_shake(9)
+	arena.damage_blocks_in(p, r, enemy_dmg)
 	for e in enemies:
 		if e.dead:
 			continue
@@ -906,6 +979,7 @@ func shockwave(p: Vector2, lvl: int) -> void:
 	fx.burst(p, Color(0.4, 0.95, 1), 20, 360, 3.0, 0.35)
 	sfx.play("shock")
 	add_shake(6)
+	arena.damage_blocks_in(p, r, dmg)
 	for e in enemies:
 		if e.dead:
 			continue
@@ -1012,13 +1086,14 @@ func resolve_static(p: Vector2, r: float) -> Vector2:
 	return p
 
 
-## Returns the pillar (x, y, radius) a point overlaps, or Vector3.ZERO.
-func _obstacle_at(p: Vector2, r: float) -> Vector3:
-	for o in obstacles:
+## Index of the obstacle a point overlaps, or -1.
+func _obstacle_at(p: Vector2, r: float) -> int:
+	for i in obstacles.size():
+		var o: Vector3 = obstacles[i]
 		var rr: float = o.z + r * 0.5
 		if p.distance_squared_to(Vector2(o.x, o.y)) < rr * rr:
-			return o
-	return Vector3.ZERO
+			return i
+	return -1
 
 
 func add_shake(amount: float) -> void:
@@ -1054,9 +1129,4 @@ func _draw() -> void:
 		y += 40
 	for i in 4:
 		draw_rect(ARENA.grow(i * 2.0), Color(0.3, 0.6, 1.0, 0.35 - i * 0.08), false, 2.0)
-	for o in obstacles:
-		var c := Vector2(o.x, o.y)
-		draw_circle(c, o.z + 8, Color(0.5, 0.3, 1.0, 0.08))
-		draw_circle(c, o.z, Color(0.09, 0.08, 0.18))
-		draw_arc(c, o.z, 0, TAU, 48, Color(0.6, 0.45, 1.0, 0.9), 3.0, true)
-		draw_arc(c, o.z * 0.6, 0, TAU, 32, Color(0.6, 0.45, 1.0, 0.25), 2.0, true)
+	# Pillars, crystals and mechanisms are drawn by arena.gd.

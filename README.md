@@ -6,8 +6,14 @@ A neon top-down arena shooter made with Godot 4 (GL Compatibility). All visuals 
 
 | Version | Play | Source |
 |---|---|---|
-| **v2.0** (current) | https://mmmax21.github.io/Neon-Arena/v2/ | `main` branch, tag `v2.0` |
+| **v2.1** (current) | https://mmmax21.github.io/Neon-Arena/v2/ | `main` branch, tag `v2.1` (v2.0: tag `v2.0`) |
 | v1.0 (original) | https://mmmax21.github.io/Neon-Arena/v1/ | `v1` branch, tag `v1.0` |
+
+## What's new in v2.1
+
+- **Play on phones and tablets** (landscape): drag on the left half to move; weapons auto-aim and auto-fire; drag on the right half to aim yourself (hybrid mode). Dash button, target lock, pause button. Three control modes: Hybrid / Auto / Twin-stick
+- **Arena shifts:** after every upgrade pick the arena changes to one of 6 layouts — crystal cover you can shoot apart, alternating laser fences, conveyor belts, twin portals
+- **Mute button** in the top-right corner (or press M)
 
 ## What's new in v2.0
 
@@ -19,7 +25,7 @@ A neon top-down arena shooter made with Godot 4 (GL Compatibility). All visuals 
 - **Second boss:** VOID WEAVER with rotating lasers, spiral bullets and summons (alternates with CORE WARDEN every 5 waves)
 - **English / 中文** — switch on the title screen or press L any time
 
-## Controls (v2.0)
+## Controls (desktop)
 
 | Action | Input |
 |---|---|
@@ -29,8 +35,20 @@ A neon top-down arena shooter made with Godot 4 (GL Compatibility). All visuals 
 | Dash (brief invincibility) | Space / Shift / Right Click |
 | Pick a card | Click, or 1 / 2 / 3 |
 | Language | L |
+| Mute | M / speaker button |
 | Pause | P / Esc |
 | Retry / change weapon | R / Click (on game over) |
+
+## Controls (touch)
+
+| Action | Input |
+|---|---|
+| Move | Drag anywhere on the left half |
+| Aim / fire | Automatic; in Hybrid mode drag on the right half to aim and fire manually |
+| Dash | Big bottom-right button |
+| Lock target | Small button next to it |
+| Pause | Button under the speaker, top-right |
+| Control mode | "Controls" button on the title or pause screen |
 
 ## v1.0
 
