@@ -1,7 +1,8 @@
 # Neon Arena 游戏设计文档
 
 > 状态：可玩原型（v0.3：中英双语、升级间隔、构筑图标）· 引擎：Godot 4.3+（GL Compatibility）· 平台：网页（桌面浏览器）
-> 在线试玩：https://mmmax21.github.io/Neon-Arena/ · 源码：https://github.com/mmmax21/Neon-Arena
+> 在线试玩：https://mmmax21.github.io/Neon-Arena/（版本选择页）· 源码：https://github.com/mmmax21/Neon-Arena
+> 版本：**v2.0**（本文档描述的版本，`main` 分支 / `v2.0` 标签，试玩 /v2/）· v1.0 初版（`v1` 分支 / `v1.0` 标签，试玩 /v1/）
 >
 > 本文档记录**当前已实现**的设计与数值。标注「规划」的内容尚未实现。
 
