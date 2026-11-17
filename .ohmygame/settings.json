@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "name": "Neon Arena",
+  "appearance": {
+    "icon": "rocket",
+    "tone": 3
+  }
+}
