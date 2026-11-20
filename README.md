@@ -6,8 +6,15 @@ A neon top-down arena shooter made with Godot 4 (GL Compatibility). All visuals 
 
 | Version | Play | Source |
 |---|---|---|
-| **v2.2** (current) | https://mmmax21.github.io/Neon-Arena/v2/ | `main` branch, tag `v2.2` (earlier: tags `v2.1`, `v2.0`) |
+| **v2.3** (current) | https://mmmax21.github.io/Neon-Arena/v2/ | `main` branch, tag `v2.3` (earlier: tags `v2.2`, `v2.1`, `v2.0`) |
 | v1.0 (original) | https://mmmax21.github.io/Neon-Arena/v1/ | `v1` branch, tag `v1.0` |
+
+## What's new in v2.3
+
+- **Five bosses in random order**, with a countdown before each boss arrives
+- **Fullscreen button** and better phone home-screen support
+- **New neon badge icon** for the browser tab, home screen and store page
+- **TapTap H5 build:** a separate `TapTap` web export preset; the server accepts the TapTap origin
 
 ## What's new in v2.2 (Season 1)
 
