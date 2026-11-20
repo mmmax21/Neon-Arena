@@ -16,7 +16,7 @@ const ARENA_EVERY := 2.0
 const ENEMY_FIELDS := ["type", "position", "facing", "t", "hp", "max_hp", "flash", "elite",
 	"phase", "phase_t", "spin", "shield", "shield_max", "fuse", "beam_dir", "beam_len", "beams",
 	"beam_lens", "beam_dirs", "segs", "boss_phase", "transition_t", "radius", "color", "is_boss",
-	"display_name", "charge_dir", "vel"]
+	"display_name", "charge_dir", "vel", "trail", "trail_t", "strikes", "lines"]
 const PLAYER_FIELDS := ["hp", "max_hp", "dead", "dash_t", "dash_cd", "dash_cd_max", "invuln",
 	"shield_up", "weapon", "lv", "rapid", "aim"]
 const LOCAL_ONLY := ["aim", "dash_t", "dash_cd"]
@@ -325,7 +325,8 @@ func _snapshot() -> Dictionary:
 	var d := {"t": "s", "st": main.state, "w": main.wave, "sc": main.score, "k": main.kills,
 		"ta": main.time_alive, "cb": main.combo, "p": ps, "e": es, "bf": bf, "bc": bc, "bp": bp, "pk": ks,
 		"m": main.spawn_markers, "hz": main.hazards, "fx": main.fx.events, "sx": Array(main.sfx.events),
-		"cl": main.clear_timer, "im": main.intermission, "picked": [local_picked, peer_picked]}
+		"cl": main.clear_timer, "im": main.intermission, "picked": [local_picked, peer_picked],
+		"bi": [main.boss_intro_t, main.boss_intro_type, main.boss_intro_p]}
 	main.fx.events = []
 	main.sfx.events.clear()
 	return d
@@ -415,6 +416,16 @@ func _apply_snapshot(d: Dictionary) -> void:
 	main.combo = int(d.get("cb", 0))
 	main.clear_timer = float(d.get("cl", 0.0))
 	main.intermission = float(d.get("im", 0.0))
+	var bi = d.get("bi")
+	if bi is Array and bi.size() == 3 and bi[2] is Vector2:
+		var prev: float = main.boss_intro_t
+		main.boss_intro_t = float(bi[0])
+		main.boss_intro_type = String(bi[1])
+		main.boss_intro_p = bi[2]
+		# Countdown shakes locally (sounds and rings arrive with the host's effect log).
+		for n in [3, 2, 1]:
+			if prev > n and main.boss_intro_t <= n:
+				main.add_shake(3.0 + (3 - n) * 3.0)
 	var st := int(d.get("st", main.state))
 	if st == main.State.GAMEOVER and main.state != main.State.GAMEOVER:
 		main.state = main.State.GAMEOVER

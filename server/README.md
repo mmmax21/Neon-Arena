@@ -61,6 +61,15 @@ npm test               # 另开一个终端，跑接口测试
 联机用的 Durable Objects 已写在 `wrangler.toml` 里，`npm run deploy` 时会一起创建，免费版就能用。
 **如果你在加联机之前已经部署过**，需要再运行一次 `npm run db:init:remote`，补上限制建房频率的表，然后 `npm run deploy`。
 
+## TapTap 版
+
+TapTap 版用导出预设「TapTap」打包（带 `taptap` 特性标签），和网页版共用这台服务器，排行榜、联机互通。
+
+- **允许 TapTap 的网页地址**：`wrangler.toml` 的 `ALLOWED_ORIGINS` 已经加上 TapTap 常见域名，支持 `https://*.taptap.cn` 这样的通配写法。如果自测时排行榜连不上，运行 `npx wrangler tail`，在手机上打开游戏，日志里的 `rejected_origin` 就是被拒的地址，把它加进 `ALLOWED_ORIGINS` 后重新部署。
+- **国内访问**：`*.workers.dev` 在国内经常连不上。最稳的办法是用一个**已备案**的自有域名（例如 `api.你的域名.cn`）在 Cloudflare 里绑定到这个 Worker（Workers → 设置 → 域和路由 → 添加自定义域），然后把 `scripts/net.gd` 里的 `API_URL_TAPTAP` 改成这个地址，再导出 TapTap 版。留空时，TapTap 版沿用 `API_URL`。
+- **玩家名**：TapTap 版不让玩家打字，名字由游戏随机生成（如「霓虹猎手42」），点名字按钮换一个。服务器对所有名字再过滤一遍：拒绝网址、5 位以上连续数字（手机号、QQ 号）和屏蔽词。要追加屏蔽词，在 `[vars]` 里加 `NAME_BLOCKLIST = "词1,词2"`，然后部署。
+- 改完服务器代码后要 `npm run deploy` 才会生效。
+
 ## 防作弊说明
 
 网页游戏的代码对玩家可见，没法做到完全防作弊，这里只挡住随手改分：

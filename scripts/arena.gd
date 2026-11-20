@@ -19,7 +19,10 @@ const POOL := ["classic", "cross", "ring", "fortress", "portals", "open", "gen",
 const LAYOUT_CLASS := {"open": "open", "classic": "mid", "portals": "mid", "fortress": "mid",
 	"ring": "tight", "cross": "tight"}
 ## Boss waves always play on the layout built for that boss.
-const BOSS_LAYOUTS := {"boss": "open", "boss2": "classic"}
+## RAZOR COMET slams into the fortress pillars; STORM BEACON's grids leave the portals as
+## escape hatches; NEON HYDRA needs the open field to wind through.
+const BOSS_LAYOUTS := {"boss": "open", "boss2": "classic", "boss3": "fortress", "boss4": "portals",
+	"boss5": "open"}
 # Generator constraints (player radius 15, dash ~140 px, run ~290 px/s)
 const GEN_PASSAGE := 60.0      # narrowest gap between separate obstacles / walls
 const GEN_COVER_REACH := 480.0 # every spot within one dash + ~1 s run of a pillar (1.4× arena)

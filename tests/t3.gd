@@ -28,15 +28,15 @@ func _ready() -> void:
 	ok(main.boss_shift_t > 0, "clearing wave 4 schedules the boss arena")
 	for i in 60:
 		main._update_waves(1.0 / 60.0)
-	ok(ar.layout == "open", "CORE WARDEN arena = open field (%s)" % ar.layout)
+	ok(ar.layout == ar.BOSS_LAYOUTS[main.boss_type(5)], "wave 5 boss %s gets its arena (%s)" % [main.boss_type(5), ar.layout])
 	ok(main.hud.announce_text.contains(ar.display_name()), "boss arena announced: " + main.hud.announce_text)
 	main.intermission = 0.0
 	main.wave = 9
-	ar.set_layout("ring", true)
+	ar.set_layout("ring" if ar.BOSS_LAYOUTS[main.boss_type(10)] != "ring" else "cross", true)
 	main.offer = ["bonus", "bonus", "bonus"] as Array[String]
 	main.state = main.State.UPGRADE
 	main.choose_upgrade(0)
-	ok(ar.layout == "classic", "upgrade before wave 10 -> VOID WEAVER arena classic (%s)" % ar.layout)
+	ok(ar.layout == ar.BOSS_LAYOUTS[main.boss_type(10)], "upgrade before wave 10 -> %s arena (%s)" % [main.boss_type(10), ar.layout])
 	main.wave = 6
 	ar.set_layout("open", true)
 	main.offer = ["bonus", "bonus", "bonus"] as Array[String]
@@ -45,12 +45,24 @@ func _ready() -> void:
 	ok(ar.layout != "open", "normal upgrade shifts to a new layout (%s)" % ar.layout)
 	main.wave = 14
 	main.waves_since_upgrade = 1
-	ar.set_layout("classic", true)
+	ar.set_layout("ring", true)
 	main.intermission = 0
 	main._on_wave_clear()
 	for i in 60:
 		main._update_waves(1.0 / 60.0)
-	ok(ar.layout == "open", "wave 15 boss (WARDEN) -> open (%s)" % ar.layout)
+	ok(ar.layout == ar.BOSS_LAYOUTS[main.boss_type(15)], "wave 15 boss %s -> its arena (%s)" % [main.boss_type(15), ar.layout])
+	# --- boss order: each run shuffles all five; no back-to-back repeat across cycles
+	var order: Array = []
+	for w in range(5, 55, 5):
+		order.append(main.boss_type(w))
+	print("boss order: ", order)
+	var first5 := order.slice(0, 5)
+	first5.sort()
+	ok(first5 == ["boss", "boss2", "boss3", "boss4", "boss5"], "first cycle meets all five bosses")
+	var rep := false
+	for i in order.size() - 1:
+		rep = rep or order[i] == order[i + 1]
+	ok(not rep, "no boss twice in a row")
 	# --- contrast rule
 	ar.bag.clear()
 	ar.set_layout("classic", true)

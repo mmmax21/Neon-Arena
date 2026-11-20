@@ -91,8 +91,31 @@ r = await play(player("Bad"), run(100, { platform: "console" }));
 ok(r.status === 400, "unknown platform rejected");
 
 // Rename
-r = await call("POST", "/api/name", { ...A, name: "  New名字123456789  " });
-ok(r.status === 200 && r.data.name === "New名字12345678".slice(0, 12), "rename trims and caps at 12: " + r.data.name);
+r = await call("POST", "/api/name", { ...A, name: "  New名字abcdefghij  " });
+ok(r.status === 200 && r.data.name === "New名字abcdefg", "rename trims and caps at 12: " + r.data.name);
+// Name filter: links, contact numbers and blocked words are refused; normal names pass.
+const E = player("Eve");
+await call("POST", "/api/run/start", E);
+for (const bad of ["加微信abc", "qq 12345678", "www.x.com", "傻 逼", "SB"]) {
+  r = await call("POST", "/api/name", { ...E, name: bad });
+  ok(r.status === 400 && r.data.error === "bad_name", `name refused: ${bad} (${r.status})`);
+}
+r = await call("POST", "/api/name", { ...E, name: "霓虹猎手27" });
+ok(r.status === 200 && r.data.name === "霓虹猎手27", "generated-style name accepted");
+{
+  const D = player("看我主页 www.ad.com");
+  const s = await call("POST", "/api/run/start", D);
+  ok(s.status === 200 && /^Pilot-/.test(s.data.name), "new player with a bad name gets a default: " + s.data?.name);
+}
+// Wildcard origins (TapTap's H5 hosts) from ALLOWED_ORIGINS
+r = await call("GET", "/api", null, "https://h5.taptap.cn");
+ok(r.cors === "https://h5.taptap.cn", "wildcard origin *.taptap.cn allowed");
+r = await call("GET", "/api", null, "https://a.b.taptap.com");
+ok(r.cors === "https://a.b.taptap.com", "nested subdomain of *.taptap.com allowed");
+for (const o of ["https://taptap.cn.evil.com", "https://xtaptap.cn", "http://h5.taptap.cn"]) {
+  r = await call("GET", "/api", null, o);
+  ok(r.cors === null, "lookalike origin refused: " + o);
+}
 r = await call("GET", `/api/board?platform=pc&mode=kbm&player_id=${A.player_id}&limit=100`);
 ok(r.data.entries.find((e) => e.me)?.name === r.data.entries.find((e) => e.me)?.name && r.data.entries.some((e) => e.name.startsWith("New名字")), "new name shows on board");
 

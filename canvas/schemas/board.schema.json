@@ -489,6 +489,9 @@
                     "prompt": {
                       "type": "string"
                     },
+                    "backgroundRemoval": {
+                      "const": true
+                    },
                     "presetId": {
                       "enum": [
                         "free",
@@ -1095,9 +1098,16 @@
                         }
                       }
                     },
+                    "kind": {
+                      "enum": [
+                        "speech",
+                        "sound-effect",
+                        "music"
+                      ]
+                    },
                     "prompt": {
                       "type": "string",
-                      "maxLength": 32000
+                      "maxLength": 40000
                     },
                     "promptSource": {
                       "type": "object",

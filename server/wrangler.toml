@@ -4,7 +4,9 @@ compatibility_date = "2025-06-01"
 
 [vars]
 # Comma-separated origins allowed to call the API. Local hosts are always allowed.
-ALLOWED_ORIGINS = "https://mmmax21.github.io"
+# GitHub Pages build, plus TapTap's H5 hosts (wildcards; see originMatches in src/index.js).
+# Rejected origins are logged: `npx wrangler tail` shows a new host to add here.
+ALLOWED_ORIGINS = "https://mmmax21.github.io,https://*.taptap.cn,https://*.taptap.com,https://*.taptap.io,https://*.tapimg.com,https://*.tapimg.net,https://*.tapapis.cn,https://*.tapapis.com"
 SEASON = "1"
 
 [[d1_databases]]

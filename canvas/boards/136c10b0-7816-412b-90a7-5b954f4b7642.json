@@ -13,6 +13,215 @@
       "data": {
         "documentId": "gdd"
       }
+    },
+    {
+      "id": "taptap-listing-doc",
+      "type": "document",
+      "title": "TapTap 商店资料与素材",
+      "description": "TapTap H5 上架用的素材清单、规格、截图顺序和商店文案。",
+      "data": {
+        "documentId": "taptap-listing"
+      }
+    },
+    {
+      "id": "node-taptap-icon",
+      "type": "asset",
+      "title": "TapTap 图标 512",
+      "description": "生产素材（TapTap 商店 + 游戏图标）：商店图标（已采用方案 C「霓虹徽章」）：青色飞船居中，外围洋红六边形竞技场框，三颗子弹落在顶点；直角方图深紫底，无文字。",
+      "data": {
+        "assetId": "taptap-icon",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-promo-16x9",
+      "type": "asset",
+      "title": "TapTap 宣传图 16:9",
+      "description": "生产素材（TapTap 商店）：首页推荐/详情页宣传图，只含游戏名；用游戏内飞船、核心守卫、裂空彗星、霓虹巨蛇摆拍渲染。",
+      "data": {
+        "assetId": "taptap-promo-16x9",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-promo-1x1",
+      "type": "asset",
+      "title": "TapTap 宣传图 1:1",
+      "description": "生产素材（TapTap 商店）：方形宣传图，与 16:9 同一场景重新构图。",
+      "data": {
+        "assetId": "taptap-promo-1x1",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-cover-460",
+      "type": "asset",
+      "title": "TapTap PC 横版封面 460x215",
+      "description": "生产素材（TapTap 商店）：PC 版横版封面，带游戏名。",
+      "data": {
+        "assetId": "taptap-cover-460",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-cover-600",
+      "type": "asset",
+      "title": "TapTap PC 竖版封面 600x900",
+      "description": "生产素材（TapTap 商店）：PC 版竖版封面，带游戏名。",
+      "data": {
+        "assetId": "taptap-cover-600",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-logo",
+      "type": "asset",
+      "title": "TapTap 游戏 LOGO",
+      "description": "生产素材（TapTap 商店）：透明底标题 LOGO，1280 宽。",
+      "data": {
+        "assetId": "taptap-logo",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-shot-1",
+      "type": "asset",
+      "title": "TapTap 截图 1：第 9 波重装突击开场",
+      "description": "生产素材（TapTap 商店）：实机截图（1920x1080），商店顺序第 1 张：第 9 波重装突击开场。",
+      "data": {
+        "assetId": "taptap-shot-1",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-shot-2",
+      "type": "asset",
+      "title": "TapTap 截图 2：坦克冲撞与满屏混战",
+      "description": "生产素材（TapTap 商店）：实机截图（1920x1080），商店顺序第 2 张：坦克冲撞与满屏混战。",
+      "data": {
+        "assetId": "taptap-shot-2",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-shot-3",
+      "type": "asset",
+      "title": "TapTap 截图 3：Boss 出场倒计时",
+      "description": "生产素材（TapTap 商店）：实机截图（1920x1080），商店顺序第 3 张：Boss 出场倒计时。",
+      "data": {
+        "assetId": "taptap-shot-3",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-shot-4",
+      "type": "asset",
+      "title": "TapTap 截图 4：裂空彗星弹道",
+      "description": "生产素材（TapTap 商店）：实机截图（1920x1080），商店顺序第 4 张：裂空彗星弹道。",
+      "data": {
+        "assetId": "taptap-shot-4",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-shot-5",
+      "type": "asset",
+      "title": "TapTap 截图 5：风暴信标激光网格",
+      "description": "生产素材（TapTap 商店）：实机截图（1920x1080），商店顺序第 5 张：风暴信标激光网格。",
+      "data": {
+        "assetId": "taptap-shot-5",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-shot-6",
+      "type": "asset",
+      "title": "TapTap 截图 6：霓虹巨蛇",
+      "description": "生产素材（TapTap 商店）：实机截图（1920x1080），商店顺序第 6 张：霓虹巨蛇。",
+      "data": {
+        "assetId": "taptap-shot-6",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-shot-7",
+      "type": "asset",
+      "title": "TapTap 截图 7：升级三选一卡片",
+      "description": "生产素材（TapTap 商店）：实机截图（1920x1080），商店顺序第 7 张：升级三选一卡片。",
+      "data": {
+        "assetId": "taptap-shot-7",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-video",
+      "type": "asset",
+      "title": "TapTap 实机录屏",
+      "description": "生产素材（TapTap 商店）：实机录屏 54.7 秒，1080p60 H.264 + AAC：波次混战、升级、Boss 倒计时、裂空彗星、风暴信标、霓虹巨蛇。",
+      "data": {
+        "assetId": "taptap-video",
+        "mediaType": "video"
+      }
+    },
+    {
+      "id": "node-taptap-test-qr",
+      "type": "asset",
+      "title": "TapTap 自测二维码",
+      "description": "用 TapTap App 扫码试玩已上传的 H5 包（v2.3）。",
+      "data": {
+        "assetId": "taptap-test-qr",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-icon-concept-a",
+      "type": "asset",
+      "title": "图标方案 A：英雄特写",
+      "description": "图标候选方案：玩家飞船大特写占满画面，沿对角线连射，身后冲刺光迹，一颗洋红敌弹点缀。冷色单主体，最简洁。",
+      "data": {
+        "assetId": "taptap-icon-concept-a",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-icon-concept-b",
+      "type": "asset",
+      "title": "图标方案 B：巨蛇对决",
+      "description": "图标候选方案：金色霓虹巨蛇的头（红眼、钳状獠牙）从右上压下来，青色飞船从左下开火。冷暖对比最强，有「Boss 脸」。",
+      "data": {
+        "assetId": "taptap-icon-concept-b",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-icon-concept-c",
+      "type": "asset",
+      "title": "图标方案 C：霓虹徽章（已采用）",
+      "description": "图标候选方案：飞船居中，外围洋红六边形竞技场框，三颗子弹落在顶点。对称徽章式，48px 下仍最清晰，适合做品牌标志。",
+      "data": {
+        "assetId": "taptap-icon-concept-c",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-icon-concept-d",
+      "type": "asset",
+      "title": "图标方案 D：弹幕风暴",
+      "description": "图标候选方案：飞船在洋红/橙色双螺旋弹幕中心冲刺，带一道残影。最能说明「弹幕射击」玩法。",
+      "data": {
+        "assetId": "taptap-icon-concept-d",
+        "mediaType": "image"
+      }
+    },
+    {
+      "id": "node-taptap-icon-concepts-sheet",
+      "type": "asset",
+      "title": "图标方案对比（含手机尺寸预览）",
+      "description": "四个图标方案并排，下排检查缩小到手机桌面尺寸后的可读性。",
+      "data": {
+        "assetId": "taptap-icon-concepts-sheet",
+        "mediaType": "image"
+      }
     }
   ],
   "edges": [],

@@ -128,10 +128,38 @@ func _draw() -> void:
 			draw_arc(p, r * (0.4 + 0.6 * fmod(t * 2.0, 1.0)), 0, TAU, 40, Color(c, 0.4), 1.5, true)
 			draw_line(p + Vector2(-r * 0.4, 0), p + Vector2(r * 0.4, 0), c, 2.0)
 			draw_line(p + Vector2(0, -r * 0.4), p + Vector2(0, r * 0.4), c, 2.0)
+	if main and main.boss_intro_t > 0:
+		_draw_boss_sigil(main.boss_intro_p, main.boss_intro_t)
 	for d in texts:
 		var k: float = clampf(d["life"] / 0.9 * 2.0, 0, 1)
 		var c: Color = d["c"]
 		draw_string(d["f"], d["p"] + Vector2(-60, 0), d["s"], HORIZONTAL_ALIGNMENT_CENTER, 120, 16, Color(c, k))
+
+
+## The boss's landing spot during the countdown: rings close in and spin faster as it nears.
+func _draw_boss_sigil(p: Vector2, left: float) -> void:
+	var k := 1.0 - clampf(left / main.BOSS_INTRO, 0, 1)
+	var beat := fmod(left, 1.0)  # 1 -> 0 within each second
+	var pulse := 0.5 + 0.5 * sin(t * (8.0 + k * 22.0))
+	var c := Color(1, 0.22, 0.38)
+	var r := 120.0 - 40.0 * k
+	draw_circle(p, r, Color(c, 0.06 + 0.1 * k + 0.05 * pulse))
+	draw_arc(p, r, 0, TAU, 64, Color(c, 0.55 + 0.4 * pulse), 3.0, true)
+	draw_arc(p, r * 1.35 * (0.7 + 0.3 * beat), 0, TAU, 64, Color(c, 0.5 * (1.0 - beat)), 2.0, true)
+	var spin := t * (1.0 + k * 5.0)
+	for i in 3:
+		var a := spin + TAU * i / 3.0
+		draw_arc(p, r * 0.72, a, a + 1.4, 20, Color(c, 0.8), 4.0, true)
+		var tip := p + Vector2.from_angle(-spin * 1.3 + TAU * i / 3.0) * (r + 26.0)
+		var d := (p - tip).normalized()
+		draw_colored_polygon(PackedVector2Array([tip + d * 18.0, tip + d.orthogonal() * 9.0, tip - d.orthogonal() * 9.0]), Color(c, 0.85))
+	draw_line(p + Vector2(-r * 0.35, 0), p + Vector2(r * 0.35, 0), Color(c, 0.9), 2.0)
+	draw_line(p + Vector2(0, -r * 0.35), p + Vector2(0, r * 0.35), Color(c, 0.9), 2.0)
+	if left < 0.5:
+		# A column of light just before it lands.
+		var lk := 1.0 - left / 0.5
+		draw_line(p + Vector2(0, -900), p, Color(1, 0.6, 0.7, 0.25 * lk), 60.0 * lk, false)
+		draw_line(p + Vector2(0, -900), p, Color(1, 1, 1, 0.7 * lk), 10.0 * lk, false)
 
 
 ## Guest side: replay effects logged by the host.

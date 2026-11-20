@@ -6,6 +6,15 @@ extends Node
 ## Set this to the deployed Worker URL, e.g. "https://neon-arena-leaderboard.<you>.workers.dev".
 ## On the web build "?api=<url>" in the page address overrides it (handy for local testing).
 const API_URL := "https://neon-arena-leaderboard.neon-arena-leaderboard.workers.dev"
+## TapTap build (export feature "taptap"): its own server address. *.workers.dev is not
+## reliably reachable in mainland China, so point this at a domain you own that routes to
+## the same Worker (see server/README.md). Empty: fall back to API_URL.
+const API_URL_TAPTAP := ""
+## Store builds that must not take free text (TapTap): names are generated from these words.
+const NAME_ADJ := ["霓虹", "疾风", "闪电", "极光", "星火", "量子", "赤焰", "苍蓝", "幻影", "迅捷",
+	"暗影", "银翼", "烈焰", "寒霜", "雷鸣", "流光", "破晓", "深空"]
+const NAME_NOUN := ["飞行员", "猎手", "游侠", "机师", "突击手", "先锋", "领航员", "守望者", "游骑兵",
+	"彗星", "战机", "信标", "旅人", "哨兵"]
 const TIMEOUT := 8.0
 const PLAYER_PATH := "user://player.cfg"
 const PLATFORMS := ["pc", "phone", "tablet"]
@@ -17,6 +26,7 @@ var base_url := ""
 var player_id := ""
 var secret := ""
 var player_name := ""
+var notice := ""  # i18n key shown on the leaderboard screen (e.g. a refused name), or ""
 var platform := "pc"
 var season := 1
 
@@ -33,7 +43,7 @@ var board_req := 0  # ignore stale responses
 
 
 func _ready() -> void:
-	base_url = API_URL
+	base_url = API_URL_TAPTAP if OS.has_feature("taptap") and API_URL_TAPTAP != "" else API_URL
 	if OS.has_feature("web"):
 		var q = JavaScriptBridge.eval("new URLSearchParams(location.search).get('api') || ''", true)
 		if q is String and q != "":
@@ -74,6 +84,19 @@ func _load_identity() -> void:
 		player_id = c.generate_random_bytes(16).hex_encode()
 		secret = c.generate_random_bytes(24).hex_encode()
 		_save_identity()
+	if not free_text_names() and player_name == "":
+		player_name = random_name()
+		_save_identity()
+
+
+## Whether players may type their own name. TapTap's rules require filtering any free text,
+## and its in-app browser may not support prompt(), so that build generates names instead.
+func free_text_names() -> bool:
+	return not OS.has_feature("taptap")
+
+
+func random_name() -> String:
+	return "%s%s%d" % [NAME_ADJ[randi() % NAME_ADJ.size()], NAME_NOUN[randi() % NAME_NOUN.size()], randi_range(10, 99)]
 
 
 func _save_identity() -> void:
@@ -166,6 +189,8 @@ func rename(new_name: String, done: Callable) -> void:
 	new_name = new_name.strip_edges().left(12)
 	if new_name == "":
 		return
+	var before := player_name
+	notice = ""
 	player_name = new_name
 	_save_identity()
 	if not enabled():
@@ -177,11 +202,21 @@ func rename(new_name: String, done: Callable) -> void:
 		if code == 200 and data is Dictionary and data.has("name"):
 			player_name = data["name"]
 			_save_identity()
+		elif code == 400:
+			player_name = before  # the server's name filter refused it
+			_save_identity()
+			notice = "rename_refused"
 		done.call())
 
 
-## Browser prompt for a new name (web only). Returns "" when cancelled.
+## A new name: a browser prompt on the web, or a freshly generated one where free text
+## isn't allowed. Returns "" when cancelled.
 func ask_name() -> String:
+	if not free_text_names():
+		var n := random_name()
+		while n == player_name:
+			n = random_name()
+		return n
 	if not OS.has_feature("web"):
 		return ""
 	var q: String = main.t("rename_prompt").replace("\\", "\\\\").replace("'", "\\'")

@@ -24,7 +24,7 @@ const WORLD := Vector2(1768, 984)
 const CAM_LEAD := 90.0      # px the camera looks ahead along the aim
 const CAM_FOLLOW := 7.0     # higher = snappier
 const CAM_EDGE := 40.0      # how much outside the arena wall the view may show
-const VERSION := "2.2"
+const VERSION := "2.3"
 ## v1 stored its best score in user://best.save; v2 keeps its own so the two web builds don't mix scores.
 const SAVE_PATH := "user://best_v2.save"
 ## Best scores per control category. The single score in SAVE_PATH is migrated to "kbm" once.
@@ -36,7 +36,6 @@ const SETTINGS_PATH := "user://settings.cfg"
 const LANGS := ["en", "zh"]
 ## An upgrade card is offered after every this many cleared waves.
 const UPGRADE_EVERY := 3
-const SEG_RADIUS := 11.0
 
 # Order matters: hud.gd mirrors these values.
 enum State { TITLE, PLAYING, PAUSED, GAMEOVER, SELECT, UPGRADE, BOARD, LOBBY }
@@ -163,6 +162,13 @@ var flow_w := 0
 var flow_h := 0
 var flow_t := 0.0
 var boss_shift_t := 0.0  # countdown to switching to the coming boss's arena
+## Boss entrance: WARNING, then 3-2-1 over the spot where it will land.
+const BOSS_INTRO := 3.6
+const BOSS_TYPES := ["boss", "boss2", "boss3", "boss4", "boss5"]
+var boss_intro_t := 0.0
+var boss_intro_type := ""
+var boss_intro_p := Vector2.ZERO
+var boss_order: Array[String] = []  # shuffled per run; wave 5k fights boss_order[k - 1]
 var wave_kind := ""  # "", "breather", or a SPIKE_WAVES key
 var last_spike := -10
 var offer_misses := {}  # upgrade id -> offers in a row it was eligible but not shown
@@ -182,6 +188,18 @@ var boss: Node2D = null
 var waves_since_upgrade := 0
 var lang := "en"
 var muted := false
+# Fullscreen: the browser's Fullscreen API on the web (not available on iPhone Safari),
+# the window mode elsewhere.
+var pointer_override = null  # Vector2 in HUD space, or null for the real pointer
+## Co-op room codes (must match server/src/room.js); typed on an in-game keypad.
+const ROOM_ALPHABET := "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+const ROOM_CODE_LEN := 4
+var entering_code := false
+var code_entry := ""
+var fs_supported := true
+var fs_on := false
+var fs_poll := 0.0
+var ios_browser := false
 var touch_mode_setting := "hybrid"
 
 var arena: Node2D
@@ -206,8 +224,15 @@ var camera: Camera2D
 
 func _ready() -> void:
 	randomize()
+	# Chinese player names show up in English mode too (leaderboard, co-op lobby)
+	var base_font := ThemeDB.fallback_font
+	if FONT_ZH not in base_font.fallbacks:
+		base_font.fallbacks = base_font.fallbacks + [FONT_ZH]
 	load_best()
 	load_settings()
+	if OS.has_feature("web"):
+		fs_supported = bool(JavaScriptBridge.eval("!!(document.fullscreenEnabled || document.webkitFullscreenEnabled)", true))
+		ios_browser = bool(JavaScriptBridge.eval("/iPhone|iPod/.test(navigator.userAgent) && !navigator.standalone", true))
 	camera = Camera2D.new()
 	camera.position = ARENA.get_center()
 	add_child(camera)
@@ -298,6 +323,8 @@ func start_game() -> void:
 	clear_timer = 0.0
 	waves_since_upgrade = 0
 	boss_shift_t = 0.0
+	boss_intro_t = 0.0
+	boss_order.clear()
 	wave_kind = ""
 	last_spike = -10
 	offer_misses.clear()
@@ -369,6 +396,7 @@ func player_by_slot(slot: int) -> Node2D:
 
 func open_lobby() -> void:
 	state = State.LOBBY
+	entering_code = false
 	card_lock = 0.3
 
 
@@ -397,6 +425,7 @@ func coop_ended(key: String) -> void:
 	players.clear()
 	player = null
 	boss = null
+	boss_intro_t = 0.0
 	spawn_markers.clear()
 	hazards.clear()
 	offer.clear()
@@ -431,6 +460,7 @@ func start_client_game(my_weapon: String, host_weapon: String) -> void:
 	combo = 0
 	time_alive = 0.0
 	boss = null
+	boss_intro_t = 0.0
 	run_cat = input_cat()
 	state = State.PLAYING
 	snap_camera()
@@ -484,6 +514,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			pick = k - KEY_1
 		elif k >= KEY_KP_1 and k <= KEY_KP_3:
 			pick = k - KEY_KP_1
+		if state == State.LOBBY and entering_code:
+			_code_key(k)
+			return
 		if (k == KEY_P or k == KEY_ESCAPE) and state == State.LOBBY:
 			coop.leave()
 			state = State.TITLE
@@ -505,6 +538,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				return
 		if k == KEY_M:
 			set_muted(not muted)
+			return
+		if k == KEY_F and fs_supported:
+			toggle_fullscreen()
 			return
 		if k == KEY_K:
 			cycle_shake()
@@ -541,6 +577,9 @@ func _unhandled_input(event: InputEvent) -> void:
 func press_at(pos: Vector2) -> void:
 	if hud.mute_at(pos):
 		set_muted(not muted)
+		return
+	if hud.fs_at(pos):
+		toggle_fullscreen()
 		return
 	if touch.active and hud.ctrl_at(pos):
 		touch.cycle_mode()
@@ -596,6 +635,21 @@ func _after_gameover() -> void:
 func _lobby_press(pos: Vector2) -> void:
 	if card_lock > 0:
 		return
+	if entering_code:
+		for b in hud.keypad_buttons():
+			if (b["rect"] as Rect2).has_point(pos):
+				match b["kind"]:
+					"key":
+						_code_add(b["value"])
+					"del":
+						code_entry = code_entry.left(-1)
+						sfx.play("beep")
+					"cancel":
+						entering_code = false
+					"join":
+						_code_submit()
+				return
+		return
 	for b in hud.lobby_buttons():
 		if not (b["rect"] as Rect2).has_point(pos) or not b.get("on", true):
 			continue
@@ -603,9 +657,10 @@ func _lobby_press(pos: Vector2) -> void:
 			"create":
 				coop.create_room()
 			"join":
-				var c := _ask_code()
-				if c != "":
-					coop.join_room(c)
+				# On-screen keypad: works where prompt() doesn't (in-app browsers) and on phones.
+				entering_code = true
+				code_entry = ""
+				sfx.play("card")
 			"start":
 				coop.host_start()
 			"leave":
@@ -620,16 +675,42 @@ func _lobby_press(pos: Vector2) -> void:
 		return
 
 
-func _ask_code() -> String:
-	if not OS.has_feature("web"):
-		return ""
-	var q: String = t("coop_code_prompt").replace("\\", "\\\\").replace("'", "\\'")
-	var v = JavaScriptBridge.eval("prompt('%s', '') || ''" % q, true)
-	return v if v is String else ""
+func _code_add(c: String) -> void:
+	if code_entry.length() >= ROOM_CODE_LEN or not ROOM_ALPHABET.contains(c):
+		return
+	code_entry += c
+	sfx.play("beep")
+	if code_entry.length() == ROOM_CODE_LEN:
+		_code_submit()
+
+
+func _code_submit() -> void:
+	if code_entry.length() < ROOM_CODE_LEN:
+		return
+	entering_code = false
+	coop.join_room(code_entry)
+
+
+## Physical keyboard while the keypad is open: letters and digits, Backspace, Enter, Esc.
+func _code_key(k: int) -> void:
+	if k == KEY_ESCAPE:
+		entering_code = false
+	elif k == KEY_BACKSPACE:
+		code_entry = code_entry.left(-1)
+	elif k == KEY_ENTER or k == KEY_KP_ENTER:
+		_code_submit()
+	elif k >= KEY_A and k <= KEY_Z:
+		_code_add(char(k))
+	elif k >= KEY_0 and k <= KEY_9:
+		_code_add(char(k))
+	elif k >= KEY_KP_0 and k <= KEY_KP_9:
+		_code_add(str(k - KEY_KP_0))
 
 
 ## Where the HUD treats the pointer as being: the mouse, or a held touch in touch mode.
 func pointer_pos() -> Vector2:
+	if pointer_override != null:
+		return pointer_override  # scripted captures (store video / screenshots) aim the crosshair
 	if touch and touch.active:
 		return touch.hover_pos()
 	return hud.get_local_mouse_position()
@@ -643,6 +724,10 @@ func _notification(what: int) -> void:
 func _process(delta: float) -> void:
 	delta = minf(delta, 0.05)
 	card_lock -= delta
+	fs_poll -= delta
+	if fs_poll <= 0:
+		fs_poll = 0.4
+		fs_on = _query_fullscreen()
 	match state:
 		State.PLAYING:
 			update_game(delta)
@@ -724,6 +809,7 @@ func view_rect() -> Rect2:
 # ---------------------------------------------------------------- leaderboard screen
 
 func open_board() -> void:
+	net.notice = ""
 	board_back = state
 	board_platform = net.platform
 	board_mode = run_cat if state == State.GAMEOVER else input_cat()
@@ -877,9 +963,12 @@ func begin_wave() -> void:
 		list.append(t)
 	list.shuffle()
 	if is_boss:
-		var bt: String = boss_type(wave)
-		list.push_front(bt)
-		hud.announce(t("wave_boss") % [wave, t("boss_" + bt)], Color(1, 0.3, 0.6))
+		# The boss lands after a countdown (see _update_waves); its escorts follow it in.
+		boss_intro_type = boss_type(wave)
+		boss_intro_p = _boss_spawn_point()
+		boss_intro_t = BOSS_INTRO
+		hud.announce_t = 0.0
+		sfx.play("siren")
 	elif SPIKE_WAVES.has(wave_kind):
 		hud.announce(t("wave_spike") % [wave, t("spike_" + wave_kind)], Color(1, 0.6, 0.2))
 		sfx.play("charge")
@@ -1034,8 +1123,55 @@ func flow_dir(p: Vector2, big := false) -> Vector2:
 	return Vector2.ZERO
 
 
+## Every run meets the bosses in a fresh shuffled order; a cycle never starts with the boss
+## that ended the previous one.
 func boss_type(w: int) -> String:
-	return ["boss", "boss2"][(w / 5 - 1) % 2]
+	var i := maxi(w / 5 - 1, 0)
+	while boss_order.size() <= i:
+		var bag: Array[String] = []
+		bag.assign(BOSS_TYPES)
+		bag.shuffle()
+		if not boss_order.is_empty() and bag[0] == boss_order[boss_order.size() - 1]:
+			bag.reverse()
+		boss_order.append_array(bag)
+	return boss_order[i]
+
+
+## Where the boss lands: on screen (near enough to watch the countdown), clear of cover.
+func _boss_spawn_point() -> Vector2:
+	var pp: Vector2 = player.position if player else ARENA.get_center()
+	for i in 60:
+		var p := pp + Vector2.from_angle(randf() * TAU) * randf_range(330.0, 470.0)
+		if ARENA.grow(-90).has_point(p) and _clear_of_obstacles(p, 80) and not arena.near_portal(p, 90):
+			return p
+	return _find_spawn_point()
+
+
+## Countdown beats: each number lands with a thud, a growing shake and a ring on the spot.
+func _boss_intro_beats(prev: float, cur: float) -> void:
+	for n in [3, 2, 1]:
+		if prev > n and cur <= n:
+			sfx.play("count")
+			add_shake(3.0 + (3 - n) * 3.0)
+			fx.ring(boss_intro_p, 200.0 - n * 30.0, Color(1, 0.25, 0.4), 0.55)
+
+
+func _boss_arrive() -> void:
+	boss_intro_t = 0.0
+	for s in hurtable_players():
+		var away: Vector2 = s.position - boss_intro_p
+		if away.length() < 150.0:
+			var n := away.normalized() if away.length() > 1.0 else Vector2.RIGHT
+			s.vel = n * 700.0
+			s.position = resolve_static(boss_intro_p + n * 150.0, s.radius)
+	var e := _spawn_enemy(boss_intro_type, boss_intro_p)
+	fx.ring(boss_intro_p, 380, Color(1, 1, 1), 0.7)
+	fx.burst(boss_intro_p, e.color, 70, 560, 6.0, 1.0)
+	add_shake(24)
+	sfx.play("slam")
+	sfx.play("explode_big")
+	hud.announce(t("boss_" + e.type), e.color.lightened(0.2))
+	spawn_timer = 1.6
 
 
 ## Each boss fights on the layout built for it: CORE WARDEN pulls the player in on the open
@@ -1070,6 +1206,13 @@ func _update_waves(delta: float) -> void:
 		intermission -= delta
 		if intermission <= 0:
 			begin_wave()
+		return
+	if boss_intro_t > 0:
+		var prev := boss_intro_t
+		boss_intro_t -= delta
+		_boss_intro_beats(prev, boss_intro_t)
+		if boss_intro_t <= 0:
+			_boss_arrive()
 		return
 	spawn_timer -= delta
 	if spawn_timer <= 0 and not spawn_queue.is_empty() and (spawn_queue[0].begins_with("boss") or field_count() < alive_cap()):
@@ -1517,6 +1660,37 @@ func set_lang(l: String) -> void:
 
 
 ## Mutes every sound through the master bus.
+func _query_fullscreen() -> bool:
+	if OS.has_feature("web"):
+		return bool(JavaScriptBridge.eval("!!(document.fullscreenElement || document.webkitFullscreenElement)", true))
+	return DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+
+
+## Runs inside a click / key / tap handler, so the browser accepts the request.
+func toggle_fullscreen() -> void:
+	sfx.play("card")
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("""(function () {
+			var d = document, e = d.documentElement;
+			if (d.fullscreenElement || d.webkitFullscreenElement) {
+				(d.exitFullscreen || d.webkitExitFullscreen).call(d);
+				return;
+			}
+			var req = e.requestFullscreen || e.webkitRequestFullscreen;
+			if (!req) return;
+			var p = req.call(e, {navigationUI: 'hide'});
+			if (p && p.then) p.then(function () {
+				if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(function () {});
+			}).catch(function () {});
+		})()""", true)
+		fs_on = not fs_on
+		fs_poll = 0.6
+		return
+	var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED if full else DisplayServer.WINDOW_MODE_FULLSCREEN)
+	fs_on = not full
+
+
 func set_muted(m: bool) -> void:
 	muted = m
 	AudioServer.set_bus_mute(0, muted)
@@ -1659,12 +1833,12 @@ func _player_bullet_hits(b: Node2D, p: Vector2) -> void:
 			else:
 				b.dead = true
 			return
-	# Snake bodies are armoured: they stop (or deflect) shots.
+	# Snake and hydra bodies are armoured: they stop (or deflect) shots.
 	for e in enemies:
-		if e.dead or e.type != "snake":
+		if e.dead or e.segs.is_empty():
 			continue
 		for s in e.segs:
-			var sr: float = SEG_RADIUS + b.radius
+			var sr: float = e.seg_r + b.radius
 			if p.distance_squared_to(s) < sr * sr:
 				fx.burst(p, Color(1, 0.95, 0.7), 4, 160, 2.0, 0.2)
 				if b.bounce > 0:
@@ -1722,10 +1896,10 @@ func fire_laser(o: Vector2, d: Vector2, dmg: float, c: Color) -> void:
 	var length := cast_ray(o, d, 1600.0)
 	var wall_hit := ray_hit
 	for e in enemies:
-		if e.dead or e.type != "snake":
+		if e.dead or e.segs.is_empty():
 			continue
 		for s in e.segs:
-			var tt := _ray_circle(o, d, s, SEG_RADIUS)
+			var tt := _ray_circle(o, d, s, e.seg_r)
 			if tt >= 0.0 and tt < length:
 				length = tt
 				wall_hit = -1
@@ -1836,11 +2010,10 @@ func kill_enemy(e: Node2D) -> void:
 				var off := Vector2.from_angle(TAU * i / 3 + randf())
 				var m := spawn_enemy_now("mini", resolve_static(e.position + off * 14, 9))
 				m.knock = off * 260.0
-		"snake":
-			for s in e.segs:
-				fx.burst(s, e.color, 8, 220, 3.0, 0.5)
 		"mine":
 			explode(e.position, EnemyScript.MINE_BLAST, 3.0, true)
+	for s in e.segs:
+		fx.burst(s, e.color, 8, 220, 3.0, 0.5)
 	if e.elite == "volatile":
 		for i in 10:
 			var a := TAU * i / 10.0

@@ -85,6 +85,49 @@ func mute_at(pos: Vector2) -> bool:
 	return mute_rect().has_point(pos)
 
 
+## Fullscreen toggle, under the mute button. On touch screens it stays off the play
+## screen (the first tap already goes fullscreen) so it can't be hit by accident.
+func fs_rect() -> Rect2:
+	if not main.fs_supported or (_touch() and main.state == PLAYING):
+		return Rect2()
+	var m := mute_rect()
+	return Rect2(m.position.x, m.end.y + 8, m.size.x, m.size.y)
+
+
+func fs_at(pos: Vector2) -> bool:
+	var r := fs_rect()
+	return r.size.x > 0 and r.has_point(pos)
+
+
+func _draw_fs_button() -> void:
+	var r := fs_rect()
+	if r.size.x <= 0:
+		return
+	var hot := r.has_point(main.pointer_pos())
+	var col := Color(0.4, 0.95, 1)
+	draw_rect(r, Color(0.03, 0.04, 0.09, 0.85))
+	draw_rect(r, Color(col, 0.18 if hot else 0.08))
+	draw_rect(r, Color(col, 0.9 if hot else 0.5), false, 2.0)
+	# Four corner brackets: pointing out = enter, pointing in = exit.
+	var c := r.get_center()
+	var s := 9.0
+	var l := 5.0
+	var arm := l if main.fs_on else -l
+	for sx in [-1.0, 1.0]:
+		for sy in [-1.0, 1.0]:
+			var corner := c + Vector2(sx, sy) * (s - l if main.fs_on else s)
+			draw_polyline(PackedVector2Array([corner + Vector2(sx * arm, 0), corner, corner + Vector2(0, sy * arm)]), col, 2.0)
+	if hot:
+		var label: String = main.t("fs_off") if main.fs_on else main.t("fs_on")
+		if _touch():
+			label = label.replace("  (F)", "").replace("（F）", "")
+		var w := _font().get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 20
+		var box := Rect2(r.end.x - w, r.end.y + 6, w, 26)
+		draw_rect(box, Color(0.02, 0.03, 0.07, 0.95))
+		draw_rect(box, Color(col, 0.8), false, 1.5)
+		_text(label, box.position + Vector2(0, 18), 14, Color(col, 0.95), HORIZONTAL_ALIGNMENT_CENTER, w)
+
+
 func _draw_mute_button() -> void:
 	var r := mute_rect()
 	var hot := r.has_point(main.pointer_pos())
@@ -293,6 +336,8 @@ func _draw_offscreen() -> void:
 	for e in main.enemies:
 		if not e.dead and e.type != "mine" and not view.grow(-4).has_point(e.position):
 			items.append([e.position, e.color, e.is_boss, 1.0])
+	if main.boss_intro_t > 0 and not view.has_point(main.boss_intro_p):
+		items.append([main.boss_intro_p, Color(1, 0.25, 0.4), true, 0.5 + 0.5 * sin(t * 14.0)])
 	for m in main.spawn_markers:
 		if not view.has_point(m["p"]):
 			items.append([m["p"], Color(1, 0.35, 0.4), String(m["type"]).begins_with("boss"), 0.5 + 0.5 * sin(t * 14.0)])
@@ -336,6 +381,8 @@ func _draw() -> void:
 	else:
 		_draw_offscreen()
 		_draw_game_hud()
+		if main.boss_intro_t > 0:
+			_draw_boss_intro()
 		if main.state == UPGRADE:
 			tooltip = {}
 			draw_rect(full_rect(), Color(0, 0, 0.02, 0.65))
@@ -361,6 +408,7 @@ func _draw() -> void:
 			tooltip = {}
 			_draw_gameover()
 	_draw_mute_button()
+	_draw_fs_button()
 	_draw_tooltip()
 	_draw_crosshair()
 
@@ -382,6 +430,8 @@ func _draw_title() -> void:
 		_center(main.t("tap_start" if _touch() else "click_start"), size.y * 0.84, 32, Color(1, 0.9, 0.35))
 	if main.best > 0:
 		_center(main.t("best_title") % [_cat_name(), main.best], size.y * 0.92, 20, Color(1, 1, 1, 0.6))
+	if main.ios_browser:
+		_center(main.t("ios_fs_hint"), size.y * 0.975, 14, Color(1, 0.85, 0.35, 0.7))
 	# Language toggle; each label is drawn in its own script's font.
 	var m: Vector2 = main.pointer_pos()
 	for l in LANG_BUTTONS:
@@ -400,6 +450,64 @@ func _draw_title() -> void:
 	_draw_board_button()
 	_draw_shake_button()
 	_text("v" + main.VERSION, Vector2(size.x - 244, size.y - 44), 14, Color(1, 1, 1, 0.35), HORIZONTAL_ALIGNMENT_RIGHT, 200, ThemeDB.fallback_font)
+
+
+## Boss entrance overlay: red vignette, scrolling WARNING tapes, then a punching 3-2-1.
+func _draw_boss_intro() -> void:
+	var left: float = main.boss_intro_t
+	var full := full_rect()
+	var k := 1.0 - clampf(left / main.BOSS_INTRO, 0, 1)
+	var pulse := 0.5 + 0.5 * sin(t * 9.0)
+	var fade := clampf(left / 0.2, 0, 1)
+	draw_rect(full, Color(0.12, 0, 0.03, (0.12 + 0.12 * k) * fade))
+	# Vignette closing in from the edges
+	var red := Color(1, 0.05, 0.18, (0.25 + 0.2 * pulse + 0.2 * k) * fade)
+	var none := Color(red, 0.0)
+	var e := 120.0 + 60.0 * k
+	var o := full
+	var i := full.grow(-e)
+	var oc := [o.position, Vector2(o.end.x, o.position.y), o.end, Vector2(o.position.x, o.end.y)]
+	var ic := [i.position, Vector2(i.end.x, i.position.y), i.end, Vector2(i.position.x, i.end.y)]
+	for s in 4:
+		var n := (s + 1) % 4
+		draw_polygon(PackedVector2Array([oc[s], oc[n], ic[n], ic[s]]), PackedColorArray([red, red, none, none]))
+	# Hazard tapes; the count sits between the top tape and the ship (screen centre), the
+	# boss name below the ship, so the player stays visible throughout.
+	_draw_tape(124.0, 1.0, fade)
+	_draw_tape(size.y - 170.0, -1.0, fade)
+	var cy := 238.0
+	var big_font: Font = ThemeDB.fallback_font
+	if left > 3.0:
+		var a := (0.55 + 0.45 * pulse) * clampf((main.BOSS_INTRO - left) / 0.15, 0, 1)
+		_text(main.t("boss_warning"), Vector2(0, cy + 32), 88, Color(1, 0.25, 0.35, a), HORIZONTAL_ALIGNMENT_CENTER, size.x)
+	else:
+		var n := ceili(left)
+		var local := left - (n - 1)  # 1 when the number lands -> 0
+		var sc := 1.0 + maxf(0.0, local - 0.8) * 3.0
+		var fs := int(150 * sc)
+		var a := clampf(local * 2.5, 0, 1) * fade
+		var col := Color(1, 1, 1, a) if local > 0.85 else Color(1, 0.3, 0.4, a)
+		_text(str(n), Vector2(0, cy + fs * 0.36), fs, col, HORIZONTAL_ALIGNMENT_CENTER, size.x, big_font)
+	var bt: String = main.boss_intro_type
+	if bt != "":
+		var bc: Color = main.EnemyScript.BOSS_COLORS.get(bt, Color.WHITE)
+		_center(main.t("wave_boss") % [main.wave, main.t("boss_" + bt)], size.y - 222.0, 32, Color(bc.lightened(0.2), fade))
+		_center(main.t("tag_" + bt), size.y - 194.0, 17, Color(1, 1, 1, 0.75 * fade))
+
+
+func _draw_tape(y: float, dir: float, alpha: float) -> void:
+	var full := full_rect()
+	var h := 34.0
+	draw_rect(Rect2(full.position.x, y, full.size.x, h), Color(0.08, 0, 0.02, 0.85 * alpha))
+	var stripe := Color(1, 0.2, 0.32, 0.9 * alpha)
+	draw_rect(Rect2(full.position.x, y, full.size.x, 3), stripe)
+	draw_rect(Rect2(full.position.x, y + h - 3, full.size.x, 3), stripe)
+	var label: String = main.t("boss_warning") + "   ·   " + main.t("boss_incoming") + "   ·   "
+	var w: float = _font().get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+	var x := full.position.x - fposmod(t * 140.0 * dir, w)
+	while x < full.end.x:
+		draw_string(_font(), Vector2(x, y + 23), label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color(1, 0.45, 0.5, alpha))
+		x += w
 
 
 func _draw_teammate() -> void:
@@ -655,6 +763,57 @@ func _draw_lobby() -> void:
 				_button(r, main.t("coop_leave"), false, Color(1, 0.6, 0.4), 18)
 			"back":
 				_button(r, main.t("lb_back"), false, Color(1, 1, 1, 0.8), 16)
+	if main.entering_code:
+		_draw_keypad()
+
+
+## Room-code keypad (co-op join): 31 code characters, delete, cancel and join.
+func keypad_buttons() -> Array:
+	var out: Array = []
+	var cx := size.x / 2
+	var kw := 62.0
+	var kh := 50.0
+	var gap := 8.0
+	var x0 := cx - (8 * kw + 7 * gap) / 2
+	var chars: String = main.ROOM_ALPHABET
+	for i in chars.length():
+		var r := Rect2(x0 + (i % 8) * (kw + gap), 318 + (i / 8) * (kh + gap), kw, kh)
+		out.append({"kind": "key", "value": chars[i], "rect": r})
+	out.append({"kind": "del", "rect": Rect2(x0 + 7 * (kw + gap), 318 + 3 * (kh + gap), kw, kh)})
+	out.append({"kind": "cancel", "rect": Rect2(cx - 230, 566, 210, 44)})
+	out.append({"kind": "join", "rect": Rect2(cx + 20, 566, 210, 44), "on": main.code_entry.length() == main.ROOM_CODE_LEN})
+	return out
+
+
+func _draw_keypad() -> void:
+	var cx := size.x / 2
+	draw_rect(full_rect(), Color(0, 0, 0.02, 0.6))
+	var panel := Rect2(cx - 310, 150, 620, 480)
+	draw_rect(panel, Color(0.03, 0.04, 0.1, 0.97))
+	draw_rect(panel, Color(0.45, 0.95, 1, 0.6), false, 2.0)
+	_center(main.t("code_title"), 190, 24, Color(0.45, 0.95, 1))
+	# Four slots; the next one to fill blinks.
+	var sw := 70.0
+	var sx := cx - (4 * sw + 3 * 14) / 2
+	for i in main.ROOM_CODE_LEN:
+		var r := Rect2(sx + i * (sw + 14), 210, sw, 86)
+		var next: bool = i == main.code_entry.length()
+		draw_rect(r, Color(1, 0.9, 0.35, 0.08 if not next else 0.12 + 0.08 * sin(t * 8.0)))
+		draw_rect(r, Color(1, 0.9, 0.35, 0.9 if next else 0.45), false, 2.0)
+		if i < main.code_entry.length():
+			_text(main.code_entry[i], r.position + Vector2(0, 62), 54, Color(1, 0.9, 0.35), HORIZONTAL_ALIGNMENT_CENTER, sw, ThemeDB.fallback_font)
+	for b in keypad_buttons():
+		var r: Rect2 = b["rect"]
+		match b["kind"]:
+			"key":
+				_button(r, b["value"], false, Color(0.85, 0.9, 1), 24)
+			"del":
+				_button(r, main.t("code_del"), false, Color(1, 0.6, 0.4), 16)
+			"cancel":
+				_button(r, main.t("code_cancel"), false, Color(1, 1, 1, 0.8), 18)
+			"join":
+				var on: bool = b["on"]
+				_button(r, main.t("code_join"), on, Color(0.5, 1, 0.6) if on else Color(1, 1, 1, 0.35), 18)
 
 
 func _button(r: Rect2, label: String, on: bool, col: Color, fs := 16) -> void:
@@ -698,7 +857,10 @@ func _draw_board() -> void:
 			"period":
 				_button(r, main.t("per_" + b["value"]), main.board_period == b["value"], Color(1, 0.5, 0.8), 14)
 			"rename":
-				_button(r, main.t("lb_rename") % net.display_name(), false, Color(0.8, 0.85, 1), 15)
+				var key := "lb_rename" if net.free_text_names() else "lb_reroll"
+				_button(r, main.t(key) % net.display_name(), false, Color(0.8, 0.85, 1), 15)
+				if net.notice != "":
+					_text(main.t(net.notice), r.position + Vector2(r.size.x + 16, r.size.y / 2 + 6), 15, Color(1, 0.5, 0.4))
 			"back":
 				_button(r, main.t("lb_back"), false, Color(1, 1, 1), 16)
 	var top := 236.0

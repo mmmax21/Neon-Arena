@@ -2,6 +2,6 @@
   "$schema": "https://www.ohmygame.ai/schema/project-1.json",
   "type": "ohmygame/godot:godot-game",
   "plugins": {
-    "ohmygame/godot": "1.0.0"
+    "ohmygame/godot": "1.0.1"
   }
 }

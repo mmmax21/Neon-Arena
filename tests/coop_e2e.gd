@@ -49,14 +49,16 @@ func _host() -> void:
 	ok(await wait_until(func(): return main.coop.peer_here, 30), "guest joined")
 	ok(await wait_until(func(): return main.coop.peer_weapon == "laser", 5), "guest weapon received: " + main.coop.peer_weapon)
 	main.coop.host_start()
+	main.boss_order.assign(["boss4", "boss5", "boss3", "boss", "boss2"])
 	ok(main.players.size() == 2 and main.players[1].remote and main.players[1].weapon == "laser", "two ships in the run")
 	var rp = main.players[1]
 	var lv_seen := {}
 	var start_pos: Vector2 = rp.position
 	var upgrades := 0
 	var waited_for_peer := false
+	var boss_t := 0.0
 	var t0 := Time.get_ticks_msec()
-	while Time.get_ticks_msec() - t0 < 50000 and main.state != main.State.GAMEOVER:
+	while Time.get_ticks_msec() - t0 < 90000 and main.state != main.State.GAMEOVER:
 		if not is_instance_valid(rp):
 			break
 		main.player.invuln = 99
@@ -64,8 +66,11 @@ func _host() -> void:
 		main.player.fire_queued = true
 		if main.state == main.State.PLAYING and Engine.get_process_frames() % 20 == 0:
 			for e in main.enemies:
-				if not e.dead:
+				# The boss lives ~9 s so the guest can watch its attacks arrive.
+				if not e.dead and (not e.is_boss or boss_t > 9.0):
 					main.damage_enemy(e, 9999.0, Vector2.RIGHT)
+		if main.boss != null:
+			boss_t += get_process_delta_time()
 		if main.state == main.State.UPGRADE and not main.offer.is_empty():
 			main.choose_upgrade(0)
 			upgrades += 1
@@ -75,13 +80,14 @@ func _host() -> void:
 		var moved: bool = rp.position.distance_to(start_pos) > 100
 		if moved:
 			start_pos = Vector2(-9999, -9999)
-		if upgrades >= 1 and main.state == main.State.PLAYING and main.wave >= 4:
+		if upgrades >= 1 and main.state == main.State.PLAYING and main.wave >= 6:
 			break
 		await get_tree().process_frame
 	ok(start_pos.x < -9000, "guest's ship moved on the host")
 	ok(upgrades >= 1, "host went through %d upgrade screens" % upgrades)
 	ok(not lv_seen.is_empty(), "guest's card applied to its ship on the host: %s" % lv_seen)
-	ok(main.wave >= 4, "waves progressed: %d" % main.wave)
+	ok(main.wave >= 6, "waves progressed past the boss: %d" % main.wave)
+	ok(boss_t > 9.0, "boss fought for %.1f s" % boss_t)
 	if false:
 		ok(rp.position.distance_to(start_pos) > 100, "guest's ship moved on the host: %s -> %s" % [start_pos.round(), rp.position.round()])
 	print("host waited for guest pick at least once: ", waited_for_peer)
@@ -102,27 +108,37 @@ func _guest() -> void:
 	var saw_enemies := 0
 	var saw_bullets := false
 	var picks := 0
+	var saw_intro := false
+	var saw_boss := ""
+	var saw_telegraph := false
 	var t0 := Time.get_ticks_msec()
 	var c: Vector2 = main.arena.CENTER
 	var ang := 0.0
-	while Time.get_ticks_msec() - t0 < 45000:
+	while Time.get_ticks_msec() - t0 < 90000:
 		ang += get_process_delta_time()
 		if main.player and main.state == main.State.PLAYING:
 			main.player.position = main.resolve_static(c + Vector2(cos(ang), sin(ang)) * 220.0, 15)
 			main.player.fire_queued = true
 		saw_enemies = maxi(saw_enemies, main.enemies.size())
+		saw_intro = saw_intro or (main.boss_intro_t > 0 and main.boss_intro_type == "boss4")
+		if main.boss != null:
+			saw_boss = main.boss.type
+			saw_telegraph = saw_telegraph or not main.boss.strikes.is_empty() or not main.boss.lines.is_empty()
 		for b in main.coop.g_bullets:
 			if b.visible:
 				saw_bullets = true
 		if main.state == main.State.UPGRADE and not main.offer.is_empty() and not main.coop.guest_picked:
 			main.choose_upgrade(0)
 			picks += 1
-		if picks >= 1 and main.state == main.State.PLAYING and main.wave >= 4:
+		if picks >= 1 and main.state == main.State.PLAYING and main.wave >= 6:
 			break
 		await get_tree().process_frame
 	ok(saw_enemies > 0, "enemies arrive from snapshots (max %d)" % saw_enemies)
 	ok(saw_bullets, "bullets arrive from snapshots")
-	ok(main.wave >= 4, "wave counter synced: %d" % main.wave)
+	ok(main.wave >= 6, "wave counter synced: %d" % main.wave)
+	ok(saw_intro, "boss countdown synced to the guest")
+	ok(saw_boss == "boss4", "boss arrives on the guest (%s)" % saw_boss)
+	ok(saw_telegraph, "boss strike / grid telegraphs synced")
 	ok(picks >= 1, "guest picked %d upgrade cards" % picks)
 	ok(not main.player.lv.is_empty(), "own upgrades synced back: %s" % main.player.lv)
 	ok(main.players[0].position.distance_to(c) >= 0.0 and main.players.size() == 2, "host ship visible")

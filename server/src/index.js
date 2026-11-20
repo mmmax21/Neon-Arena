@@ -236,7 +236,7 @@ async function listBoards(env) {
 async function rename(request, env) {
   const body = await readJson(request);
   const player = await authPlayer(env, body, false);
-  const name = cleanName(body.name);
+  const name = cleanName(body.name, env);
   if (!name) throw new HttpError(400, "bad_name");
   await env.DB.prepare("UPDATE players SET name = ?1 WHERE id = ?2").bind(name, player.id).run();
   return { ok: true, name };
@@ -293,7 +293,7 @@ async function authPlayer(env, body, create) {
     return row;
   }
   if (!create) throw new HttpError(403, "unknown_player");
-  const name = cleanName(body.name) || `Pilot-${id.slice(0, 4)}`;
+  const name = cleanName(body.name, env) || `Pilot-${id.slice(0, 4)}`;
   await env.DB.prepare("INSERT INTO players (id, secret_hash, name, created_at) VALUES (?1, ?2, ?3, ?4)")
     .bind(id, hash, name, Date.now()).run();
   return { id, name };
@@ -313,30 +313,64 @@ function periodKeys(ms) {
   return { day, week: monday };
 }
 
-function cleanName(v) {
-  // No word filter (by design); just strip control characters and cap the length.
+// Player names are public on the leaderboard. Store builds that must not take free text
+// (TapTap) generate names in the game; this filter still guards every name the server
+// accepts: no links, no contact numbers or IDs, and no words from the block lists.
+const NAME_BLOCK = [
+  "fuck", "shit", "bitch", "cunt", "nigger", "傻逼", "煞笔", "沙比", "傻b", "sb", "操你", "草你",
+  "日你", "你妈", "尼玛", "妈逼", "他妈", "去死", "贱人", "婊子", "鸡巴", "屌", "逼",
+  "微信", "威信", "vx", "wx", "qq群", "加q", "加群", "扣扣", "公众号", "代练", "外挂", "辅助",
+];
+
+function cleanName(v, env = {}) {
   const s = String(v ?? "").replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  return Array.from(s).slice(0, NAME_MAX).join("");
+  const name = Array.from(s).slice(0, NAME_MAX).join("");
+  return nameAllowed(name, env) ? name : "";
+}
+
+function nameAllowed(name, env = {}) {
+  const n = name.toLowerCase().replace(/[\s._\-·•|*]/g, "");
+  if (!n) return false;
+  if (/(https?|www|\.com|\.cn|\.net|\.top|\.xyz|\/\/)/.test(name.toLowerCase())) return false;
+  if (/\d{5,}/.test(n)) return false; // phone / QQ numbers
+  const extra = (env.NAME_BLOCKLIST || "").split(",").map((w) => w.trim().toLowerCase()).filter(Boolean);
+  return ![...NAME_BLOCK, ...extra].some((w) => n.includes(w));
+}
+
+// ALLOWED_ORIGINS: comma-separated origins; an entry like https://*.example.com accepts any
+// subdomain of example.com over that scheme.
+function originMatches(origin, entry) {
+  if (!entry) return false;
+  if (!entry.includes("*.")) return origin === entry;
+  const m = entry.match(/^(https?):\/\/\*\.([a-z0-9.-]+)$/i);
+  if (!m) return false;
+  const host = m[2].replace(/\./g, "\\.");
+  return new RegExp(`^${m[1]}:\\/\\/([a-z0-9-]+\\.)+${host}(:\\d+)?$`, "i").test(origin);
+}
+
+function originOk(origin, env) {
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  return (env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).some((e) => originMatches(origin, e));
 }
 
 function originAllowed(request, env) {
   const origin = request.headers.get("Origin") || "";
   if (!origin) return true; // non-browser clients (tests); browsers always send Origin
-  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
-  return (env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).includes(origin);
+  if (originOk(origin, env)) return true;
+  // Visible with `npx wrangler tail`: how a new host (a store's H5 domain) shows up.
+  console.log(JSON.stringify({ rejected_origin: origin }));
+  return false;
 }
 
 function corsHeaders(request, env) {
   const origin = request.headers.get("Origin") || "";
-  const allowed = (env.ALLOWED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
-  const local = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
   const h = {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
-  if (origin && (local || allowed.includes(origin))) h["Access-Control-Allow-Origin"] = origin;
+  if (origin && originOk(origin, env)) h["Access-Control-Allow-Origin"] = origin;
   return h;
 }
 

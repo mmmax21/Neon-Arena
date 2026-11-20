@@ -31,6 +31,10 @@ func _ready() -> void:
 	sounds["beep"] = _make(0.09, 1500, 1500, "square", 0.0, 0.14)
 	sounds["card"] = _make(0.3, 400, 1300, "square", 0.0, 0.2)
 	sounds["shock"] = _make(0.35, 320, 60, "sine", 0.6, 0.4)
+	# Boss entrance: alarm, countdown thuds, landing slam
+	sounds["siren"] = _make(0.9, 380, 880, "saw", 0.05, 0.2)
+	sounds["count"] = _make(0.3, 170, 55, "square", 0.35, 0.5)
+	sounds["slam"] = _make(1.0, 95, 20, "square", 0.95, 0.55)
 	for i in 16:
 		var p := AudioStreamPlayer.new()
 		add_child(p)
