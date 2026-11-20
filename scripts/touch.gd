@@ -70,6 +70,35 @@ func set_mode(m: String) -> void:
 		mode = m
 
 
+# Button placement: inside the arena by default, in the right margin when main.side_hud().
+func pause_rect() -> Rect2:
+	if main.side_hud():
+		return Rect2(main.W + main.side_margin() - 50, 88, 38, 38)
+	return PAUSE_RECT
+
+
+func dash_pos() -> Vector2:
+	if main.side_hud():
+		return Vector2(main.W + main.side_margin() / 2.0, 600)
+	return DASH_BTN
+
+
+func dash_r() -> float:
+	return minf(DASH_R, main.side_margin() / 2.0 - 6.0) if main.side_hud() else DASH_R
+
+
+func lock_pos() -> Vector2:
+	if main.side_hud():
+		return Vector2(main.W + main.side_margin() / 2.0, 470)
+	return LOCK_BTN
+
+
+func move_hint_pos() -> Vector2:
+	if main.side_hud():
+		return Vector2(-main.side_margin() / 2.0, 600)
+	return MOVE_HINT
+
+
 func reset() -> void:
 	move_id = -1
 	aim_id = -1
@@ -96,13 +125,13 @@ func _input(event: InputEvent) -> void:
 			active = true
 			reset()
 		if event.pressed:
-			_press(event.index, event.position)
+			_press(event.index, event.position - position)
 		else:
-			_release(event.index, event.position)
+			_release(event.index, event.position - position)
 		get_viewport().set_input_as_handled()
 	elif event is InputEventScreenDrag:
 		last_touch = t
-		_drag(event.index, event.position)
+		_drag(event.index, event.position - position)
 		get_viewport().set_input_as_handled()
 	elif active and event is InputEventMouseMotion and t - last_touch > 1.0 and event.relative.length() > 3.0:
 		# A real mouse is being used: back to desktop controls.
@@ -117,15 +146,15 @@ func _press(id: int, p: Vector2) -> void:
 	if main.hud.mute_at(p):
 		button_ids[id] = "mute"
 		main.set_muted(not main.muted)
-	elif PAUSE_RECT.grow(8).has_point(p):
+	elif pause_rect().grow(8).has_point(p):
 		button_ids[id] = "pause"
 		main.state = main.State.PAUSED
 		main.sfx.play("card")
-	elif p.distance_to(DASH_BTN) < DASH_R + 16:
+	elif p.distance_to(dash_pos()) < dash_r() + 16:
 		button_ids[id] = "dash"
 		dash_buf = 0.2
 		dash_flash = 0.15
-	elif mode != "twin" and p.distance_to(LOCK_BTN) < LOCK_R + 12:
+	elif mode != "twin" and p.distance_to(lock_pos()) < LOCK_R + 12:
 		button_ids[id] = "lock"
 		_toggle_lock()
 	elif p.x < main.W / 2:
@@ -217,7 +246,8 @@ func steer(pl: Node2D, delta: float) -> bool:
 		return false
 	var want := _aim_point(pl) - pl.position
 	if want.length() < 1.0:
-		return false
+		# Overlapping the target: keep the current aim and keep firing.
+		return pl.position.distance_to(target.position) < target.radius + pl.radius
 	want = want.normalized()
 	pl.aim = pl.aim.slerp(want, clampf(delta * 28.0, 0, 1)).normalized()
 	var d := pl.position.distance_to(target.position)
@@ -243,6 +273,8 @@ func _score(pl: Node2D, e: Node2D) -> float:
 		w *= 3.0
 	if d > RANGE[pl.weapon]:
 		w *= 2.0
+	if not main.view_rect().grow(-20).has_point(e.position):
+		w *= 4.0  # the arena scrolls now: prefer what the player can see
 	return d * w
 
 
@@ -341,7 +373,7 @@ func _draw() -> void:
 	var cyan := Color(0.4, 0.95, 1)
 	# Target marker
 	if _alive(target) and mode != "twin" and manual_t <= 0 and not aim_dragged:
-		var c: Vector2 = target.position - main.camera.offset
+		var c: Vector2 = main.world_to_hud(target.position)
 		var r: float = target.radius + 9.0 + sin(t * 8.0) * 1.5
 		var col := Color(1, 0.35, 0.4) if locked else Color(1, 0.95, 0.5, 0.85)
 		for k in 4:
@@ -357,8 +389,9 @@ func _draw() -> void:
 		draw_circle(knob, 30, Color(cyan, 0.3))
 		draw_arc(knob, 30, 0, TAU, 32, Color(cyan, 0.8), 2.0, true)
 	else:
-		draw_arc(MOVE_HINT, STICK_R, 0, TAU, 48, Color(cyan, 0.12), 2.0, true)
-		draw_circle(MOVE_HINT, 26, Color(cyan, 0.07))
+		var mh := move_hint_pos()
+		draw_arc(mh, minf(STICK_R, main.side_margin() / 2.0 - 6.0) if main.side_hud() else STICK_R, 0, TAU, 48, Color(cyan, 0.12), 2.0, true)
+		draw_circle(mh, 26, Color(cyan, 0.07))
 	# Aim stick
 	if aim_id != -1:
 		var col := Color(1, 0.9, 0.35)
@@ -371,23 +404,26 @@ func _draw() -> void:
 	var k: float = 1.0 - pl.dash_cd / pl.dash_cd_max
 	var ready: bool = k >= 1.0
 	var dc := Color(0.35, 0.9, 1) if ready else Color(0.35, 0.6, 0.8)
-	draw_circle(DASH_BTN, DASH_R, Color(0.03, 0.04, 0.09, 0.55))
-	draw_circle(DASH_BTN, DASH_R, Color(dc, 0.25 if dash_flash > 0 else 0.08))
-	draw_arc(DASH_BTN, DASH_R, 0, TAU, 48, Color(dc, 0.3), 2.0, true)
+	var dp := dash_pos()
+	var dr := dash_r()
+	draw_circle(dp, dr, Color(0.03, 0.04, 0.09, 0.55))
+	draw_circle(dp, dr, Color(dc, 0.25 if dash_flash > 0 else 0.08))
+	draw_arc(dp, dr, 0, TAU, 48, Color(dc, 0.3), 2.0, true)
 	if not ready:
-		draw_arc(DASH_BTN, DASH_R, -PI / 2, -PI / 2 + TAU * k, 48, Color(dc, 0.9), 4.0, true)
+		draw_arc(dp, dr, -PI / 2, -PI / 2 + TAU * k, 48, Color(dc, 0.9), 4.0, true)
 	else:
-		draw_arc(DASH_BTN, DASH_R, 0, TAU, 48, Color(dc, 0.85), 3.0, true)
-	Icons.draw(self, "quick", DASH_BTN, 20.0, Color(dc, 0.95 if ready else 0.5))
+		draw_arc(dp, dr, 0, TAU, 48, Color(dc, 0.85), 3.0, true)
+	Icons.draw(self, "quick", dp, 20.0, Color(dc, 0.95 if ready else 0.5))
 	# Lock button
 	if mode != "twin":
 		var lc := Color(1, 0.35, 0.4) if locked else Color(1, 0.95, 0.5, 0.75 if _alive(target) else 0.3)
-		draw_circle(LOCK_BTN, LOCK_R, Color(0.03, 0.04, 0.09, 0.55))
-		draw_circle(LOCK_BTN, LOCK_R, Color(lc, 0.2 if locked else 0.06))
-		draw_arc(LOCK_BTN, LOCK_R, 0, TAU, 40, Color(lc, 0.8), 2.0, true)
-		Icons.draw(self, "crit", LOCK_BTN, 14.0, lc)
+		var lp := lock_pos()
+		draw_circle(lp, LOCK_R, Color(0.03, 0.04, 0.09, 0.55))
+		draw_circle(lp, LOCK_R, Color(lc, 0.2 if locked else 0.06))
+		draw_arc(lp, LOCK_R, 0, TAU, 40, Color(lc, 0.8), 2.0, true)
+		Icons.draw(self, "crit", lp, 14.0, lc)
 	# Pause button
-	var pr := PAUSE_RECT
+	var pr := pause_rect()
 	draw_rect(pr, Color(0.03, 0.04, 0.09, 0.85))
 	draw_rect(pr, Color(cyan, 0.5), false, 2.0)
 	draw_rect(Rect2(pr.position + Vector2(12, 10), Vector2(5, 18)), Color(cyan, 0.9))
@@ -395,8 +431,9 @@ func _draw() -> void:
 
 
 func _draw_rotate() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color(0.01, 0.01, 0.03, 0.96))
-	var c := size / 2 + Vector2(0, -40)
+	var full := Rect2(-position, get_viewport_rect().size)
+	draw_rect(full, Color(0.01, 0.01, 0.03, 0.96))
+	var c := full.get_center() + Vector2(0, -40)
 	var a := sin(t * 2.0) * 0.5 + 0.5
 	var phone := Rect2(-34, -60, 68, 120)
 	draw_set_transform(c, lerpf(0.0, -PI / 2, a), Vector2.ONE)
@@ -404,4 +441,4 @@ func _draw_rotate() -> void:
 	draw_circle(Vector2(0, 46), 5, Color(0.4, 0.95, 1, 0.9))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	var f: Font = main.ui_font()
-	draw_string(f, Vector2(0, c.y + 130), main.t("rotate"), HORIZONTAL_ALIGNMENT_CENTER, size.x, 40, Color(0.4, 0.95, 1))
+	draw_string(f, Vector2(full.position.x, c.y + 130), main.t("rotate"), HORIZONTAL_ALIGNMENT_CENTER, full.size.x, 40, Color(0.4, 0.95, 1))

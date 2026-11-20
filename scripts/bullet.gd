@@ -14,6 +14,7 @@ var homing := false
 var split := false
 var shard := false
 var hit_ids: Array[int] = []
+var owner_ship: Node2D = null  # co-op: whose upgrades apply to hits
 
 
 func step(delta: float) -> void:

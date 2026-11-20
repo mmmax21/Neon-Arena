@@ -10,6 +10,10 @@ var rings: Array = []   # {p, r, life, m, c}
 var texts: Array = []   # {p, s, life, c}
 var beams: Array = []   # {a, b, c, w, life, m}
 var t := 0.0
+## Online co-op host: every effect call is also logged so it can be replayed on guests.
+var record := false
+var events: Array = []
+const MAX_EVENTS := 160
 
 
 func clear() -> void:
@@ -26,6 +30,8 @@ func _add(d: Dictionary) -> void:
 
 
 func burst(p: Vector2, c: Color, count: int, spd: float, size: float = 3.0, life: float = 0.5) -> void:
+	if record and events.size() < MAX_EVENTS:
+		events.append(["burst", [p, c, count, spd, size, life]])
 	for i in count:
 		var l := life * randf_range(0.5, 1.2)
 		_add({"p": p, "v": Vector2.from_angle(randf() * TAU) * spd * randf_range(0.2, 1.0),
@@ -33,6 +39,8 @@ func burst(p: Vector2, c: Color, count: int, spd: float, size: float = 3.0, life
 
 
 func muzzle(p: Vector2, dir: Vector2, c: Color) -> void:
+	if record and events.size() < MAX_EVENTS:
+		events.append(["muzzle", [p, dir, c]])
 	for i in 3:
 		var l := randf_range(0.06, 0.12)
 		_add({"p": p, "v": dir.rotated(randf_range(-0.5, 0.5)) * randf_range(150, 320),
@@ -40,18 +48,26 @@ func muzzle(p: Vector2, dir: Vector2, c: Color) -> void:
 
 
 func ghost(p: Vector2, c: Color, r: float) -> void:
+	if record and events.size() < MAX_EVENTS:
+		events.append(["ghost", [p, c, r]])
 	_add({"p": p, "v": Vector2.ZERO, "life": 0.22, "m": 0.22, "c": Color(c, 0.5), "s": r, "drag": 0.0})
 
 
 func ring(p: Vector2, r: float, c: Color, life: float) -> void:
+	if record and events.size() < MAX_EVENTS:
+		events.append(["ring", [p, r, c, life]])
 	rings.append({"p": p, "r": r, "life": life, "m": life, "c": c})
 
 
 func beam(a: Vector2, b: Vector2, c: Color, w: float, life: float) -> void:
+	if record and events.size() < MAX_EVENTS:
+		events.append(["beam", [a, b, c, w, life]])
 	beams.append({"a": a, "b": b, "c": c, "w": w, "life": life, "m": life})
 
 
 func text(p: Vector2, s: String, c: Color) -> void:
+	if record and events.size() < MAX_EVENTS:
+		events.append(["text", [p, s, c]])
 	var f: Font = main.ui_font() if main else ThemeDB.fallback_font
 	texts.append({"p": p + Vector2(0, -10), "s": s, "life": 0.9, "c": c, "f": f})
 
@@ -116,3 +132,24 @@ func _draw() -> void:
 		var k: float = clampf(d["life"] / 0.9 * 2.0, 0, 1)
 		var c: Color = d["c"]
 		draw_string(d["f"], d["p"] + Vector2(-60, 0), d["s"], HORIZONTAL_ALIGNMENT_CENTER, 120, 16, Color(c, k))
+
+
+## Guest side: replay effects logged by the host.
+func replay(list: Array) -> void:
+	for ev in list:
+		if not (ev is Array) or ev.size() != 2 or not (ev[1] is Array):
+			continue
+		var a: Array = ev[1]
+		match String(ev[0]):
+			"burst":
+				if a.size() == 6: burst(a[0], a[1], mini(int(a[2]), 80), a[3], a[4], a[5])
+			"muzzle":
+				if a.size() == 3: muzzle(a[0], a[1], a[2])
+			"ring":
+				if a.size() == 4: ring(a[0], a[1], a[2], a[3])
+			"beam":
+				if a.size() == 5: beam(a[0], a[1], a[2], a[3], a[4])
+			"text":
+				if a.size() == 3: text(a[0], String(a[1]), a[2])
+			"ghost":
+				if a.size() == 3: ghost(a[0], a[1], a[2])

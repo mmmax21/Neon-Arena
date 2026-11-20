@@ -1,0 +1,15 @@
+{
+  "name": "neon-arena-leaderboard",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local --port 8787",
+    "db:init:local": "wrangler d1 execute neon-arena --local --file=schema.sql",
+    "db:init:remote": "wrangler d1 execute neon-arena --remote --file=schema.sql",
+    "deploy": "wrangler deploy",
+    "test": "node test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

@@ -115,6 +115,36 @@ static func draw(ci: CanvasItem, id: String, c: Vector2, s: float, col: Color) -
 			for sx in [-1.0, 1.0]:
 				ci.draw_line(mid + Vector2(s * 0.58 * sx, 0), c + Vector2(s * 0.58 * sx, top), col, w * 1.7, true)
 				ci.draw_line(c + Vector2(s * 0.58 * sx, top), c + Vector2(s * 0.58 * sx, top - s * 0.3), Color.WHITE, w * 1.7, true)
+		"phase":
+			# Dash chevron cutting through an enemy diamond.
+			var dia := PackedVector2Array([c + Vector2(s * 0.25, -s * 0.55), c + Vector2(s * 0.8, 0), c + Vector2(s * 0.25, s * 0.55), c + Vector2(-s * 0.3, 0), c + Vector2(s * 0.25, -s * 0.55)])
+			ci.draw_polyline(dia, Color(col, 0.55), w * 0.8, true)
+			ci.draw_line(c + Vector2(-s * 0.95, s * 0.35), c + Vector2(s * 0.95, -s * 0.35), Color.WHITE, w * 0.7, true)
+			ci.draw_line(c + Vector2(-s * 0.95, s * 0.35), c + Vector2(s * 0.95, -s * 0.35), col, w * 1.4, true)
+			ci.draw_polyline(PackedVector2Array([c + Vector2(-s * 0.85, -s * 0.55), c + Vector2(-s * 0.35, -s * 0.2), c + Vector2(-s * 0.85, s * 0.15)]), col, w, true)
+		"reactive":
+			var hx := PackedVector2Array()
+			for i in 7:
+				hx.append(c + Vector2.from_angle(-PI / 2 + TAU * i / 6) * s * 0.5)
+			ci.draw_polyline(hx, col, w, true)
+			for i in 6:
+				var d := Vector2.from_angle(TAU * i / 6)
+				ci.draw_line(c + d * s * 0.65, c + d * s * 1.0, Color(col, 0.8), w, true)
+			ci.draw_circle(c, s * 0.16, Color.WHITE)
+		"inferno":
+			for k in 2:
+				var sc := s * (1.0 - k * 0.45)
+				var fl := PackedVector2Array([Vector2(0, -0.95), Vector2(0.55, -0.1), Vector2(0.5, 0.45), Vector2(0, 0.85), Vector2(-0.5, 0.45), Vector2(-0.55, -0.1), Vector2(0, -0.95)])
+				for i in fl.size():
+					fl[i] = c + Vector2(0, s * 0.05) + fl[i] * sc
+				ci.draw_polyline(fl, col if k == 0 else Color.WHITE, w, true)
+			ci.draw_line(c + Vector2(-s * 0.95, s * 0.9), c + Vector2(s * 0.95, s * 0.9), Color(col, 0.7), w, true)
+		"storm":
+			var mid2 := c + Vector2(0, s * 0.15)
+			ci.draw_arc(mid2, s * 0.6, 0, PI, 16, Color(col, 0.6), w * 1.4, true)
+			for sx in [-1.0, 1.0]:
+				ci.draw_line(mid2 + Vector2(s * 0.6 * sx, 0), c + Vector2(s * 0.6 * sx, -s * 0.5), Color(col, 0.6), w * 1.4, true)
+			ci.draw_polyline(PackedVector2Array([c + Vector2(s * 0.15, -s * 0.95), c + Vector2(-s * 0.2, -s * 0.05), c + Vector2(s * 0.15, -s * 0.05), c + Vector2(-s * 0.15, s * 0.75)]), Color.WHITE, w * 1.1, true)
 		"repair":
 			ci.draw_rect(Rect2(c + Vector2(-s * 0.2, -s * 0.75), Vector2(s * 0.4, s * 1.5)), col)
 			ci.draw_rect(Rect2(c + Vector2(-s * 0.75, -s * 0.2), Vector2(s * 1.5, s * 0.4)), col)

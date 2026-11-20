@@ -8,6 +8,14 @@ const DASH_TIME := 0.16
 const DASH_SPEED := 860.0
 const COLOR := Color(0.25, 0.9, 1.0)
 const SHIELD_CD := 15.0
+const SHIELD_CD_REACTIVE := 9.0
+## Pulse MULTISHOT: the aimed shot keeps full damage, extra shots deal this fraction.
+const PULSE_SIDE_DAMAGE := 0.5
+## Light costs on firepower cards (per level).
+const POWER_SLOW := 0.03     # move speed -3%
+const MULTI_SLOW_FIRE := 0.05  # fire interval +5%
+const RAPID_SPREAD := 0.02   # extra aim jitter, radians
+const PHASE_DASH_DAMAGE := 4.0
 const FIRE_INTERVAL := {"pulse": 0.13, "scatter": 0.5, "laser": 0.38}
 
 var main: Node2D
@@ -31,9 +39,27 @@ var ghost_t := 0.0
 var trail_t := 0.0
 var shield_up := false
 var shield_cd := 0.0
+var side_flip := 1.0  # alternates odd pulse side shots left/right
+var dash_hits: Array = []  # enemy ids already struck by this PHASE DASH
 var fire_queued := false  # a click shorter than one frame still fires
 var dead := false
 var anim := 0.0
+# Online co-op
+var slot := 0
+var remote := false   # host-side copy of a guest's ship: driven by net_in, not local input
+var client := false   # a guest's own ship: moves locally (prediction), the host fires for it
+var net_in := {"mv": Vector2.ZERO, "aim": Vector2.RIGHT, "fire": false, "dash": 0, "pos": Vector2.ZERO}
+var dash_seq := 0      # client: dashes started; remote: last dash seen
+var want_fire := false # client: fire button state sent to the host
+
+
+func is_local() -> bool:
+	return main.player == self and not remote
+
+
+## Color of this ship: the host is cyan, the guest magenta.
+func ship_color() -> Color:
+	return COLOR if slot == 0 else Color(1, 0.45, 0.85)
 
 
 func level(id: String) -> int:
@@ -53,6 +79,9 @@ func add_upgrade(id: String) -> void:
 			dash_cd_max = DASH_CD * pow(0.8, level("quick"))
 		"shield":
 			shield_up = true
+		"reactive":
+			if not shield_up:
+				shield_cd = minf(shield_cd, SHIELD_CD_REACTIVE)
 
 
 func damage_mult() -> float:
@@ -60,7 +89,11 @@ func damage_mult() -> float:
 
 
 func crit_chance() -> float:
-	return 0.12 * level("crit")
+	return 0.15 * level("crit")
+
+
+func move_speed() -> float:
+	return speed * (1.0 - POWER_SLOW * level("power"))
 
 
 func pickup_range() -> float:
@@ -68,11 +101,11 @@ func pickup_range() -> float:
 
 
 func drop_mult() -> float:
-	return 1.0 + 0.3 * level("magnet")
+	return 1.0 + 0.3 * level("magnet") + 0.2 * level("storm")
 
 
 func fire_interval() -> float:
-	var f: float = FIRE_INTERVAL[weapon] * pow(0.83, level("rapid"))
+	var f: float = FIRE_INTERVAL[weapon] * pow(0.83, level("rapid")) * (1.0 + MULTI_SLOW_FIRE * level("multi"))
 	return f * (0.5 if rapid > 0 else 1.0)
 
 
@@ -101,25 +134,37 @@ func update(delta: float) -> void:
 			shield_up = true
 			main.fx.ring(position, 50, Color(0.6, 0.95, 1), 0.35)
 			main.sfx.play("pickup")
-	var mv := move_input()
+	var mv := Vector2.ZERO
 	var touch = main.touch
 	var touch_fire := false
-	if touch.active:
-		var tm: Vector2 = touch.move_vector()
-		if tm != Vector2.ZERO:
-			mv = tm
-		touch_fire = touch.steer(self, delta)
+	if remote:
+		mv = net_in["mv"]
+		if (net_in["aim"] as Vector2).length() > 0.1:
+			aim = (net_in["aim"] as Vector2).normalized()
+		touch_fire = net_in["fire"]
+		if int(net_in["dash"]) != dash_seq:
+			dash_seq = int(net_in["dash"])
+			if dash_t <= 0:
+				start_dash(mv.normalized() if mv != Vector2.ZERO else aim)
 	else:
-		var to_mouse := get_global_mouse_position() - position
-		if to_mouse.length() > 4:
-			aim = to_mouse.normalized()
+		mv = move_input()
+		if touch.active:
+			var tm: Vector2 = touch.move_vector()
+			if tm != Vector2.ZERO:
+				mv = tm
+			touch_fire = touch.steer(self, delta)
+		else:
+			var to_mouse := get_global_mouse_position() - position
+			if to_mouse.length() > 4:
+				aim = to_mouse.normalized()
 
-	var dash_now: bool = Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_SHIFT) \
-		or (Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not touch.active)
-	if ((dash_now and not dash_held) or touch.dash_buf > 0) and dash_cd <= 0 and dash_t <= 0:
-		touch.dash_buf = 0.0
-		start_dash(mv.normalized() if mv != Vector2.ZERO else aim)
-	dash_held = dash_now
+		var dash_now: bool = Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_SHIFT) \
+			or (Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not touch.active)
+		if ((dash_now and not dash_held) or touch.dash_buf > 0) and dash_cd <= 0 and dash_t <= 0:
+			touch.dash_buf = 0.0
+			start_dash(mv.normalized() if mv != Vector2.ZERO else aim)
+			dash_seq += 1
+		dash_held = dash_now
 
 	if dash_t > 0:
 		dash_t -= delta
@@ -127,23 +172,34 @@ func update(delta: float) -> void:
 		ghost_t -= delta
 		if ghost_t <= 0:
 			ghost_t = 0.018
-			main.fx.ghost(position, COLOR, radius)
-		if level("trail") > 0:
+			main.fx.ghost(position, ship_color(), radius)
+		if level("trail") > 0 and not client:
 			trail_t -= delta
 			if trail_t <= 0:
 				trail_t = 0.02
 				main.add_hazard(position)
+		if level("phase") > 0 and not client:
+			_phase_hits()
 		if dash_t <= 0:
-			vel = dash_dir * speed
-			if level("shock") > 0:
+			vel = dash_dir * move_speed()
+			if level("shock") > 0 and not client:
 				main.shockwave(position, level("shock"))
 	else:
-		vel = vel.lerp(mv * speed, clampf(delta * 12.0, 0, 1))
+		vel = vel.lerp(mv * move_speed(), clampf(delta * 12.0, 0, 1))
 
-	position = main.resolve_static(position + vel * delta, radius)
+	if remote:
+		# The guest predicts its own movement; follow its reported position.
+		var target: Vector2 = main.resolve_static(net_in["pos"], radius)
+		position = position.lerp(target, clampf(delta * 20.0, 0, 1))
+	else:
+		position = main.resolve_static(position + vel * delta, radius)
 
-	var mouse_fire: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not touch.active
-	if (mouse_fire or fire_queued or touch_fire) and fire_cd <= 0:
+	var mouse_fire: bool = Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not touch.active and not remote
+	if client:
+		want_fire = mouse_fire or fire_queued or touch_fire
+		if want_fire:
+			fire_queued = false
+	elif (mouse_fire or fire_queued or touch_fire) and fire_cd <= 0:
 		fire_queued = false
 		shoot()
 	queue_redraw()
@@ -154,15 +210,33 @@ func start_dash(dir: Vector2) -> void:
 	dash_t = DASH_TIME
 	dash_cd = dash_cd_max
 	trail_t = 0.0
+	dash_hits.clear()
 	invuln = maxf(invuln, DASH_TIME + 0.08)
 	main.sfx.play("dash")
-	main.fx.ring(position, 40, COLOR, 0.25)
+	main.fx.ring(position, 40, ship_color(), 0.25)
+
+
+## PHASE DASH evolution: the dash itself cuts through enemies; a kill refunds the cooldown.
+func _phase_hits() -> void:
+	for e in main.enemies:
+		if e.dead or e.type == "mine":
+			continue
+		var id: int = e.get_instance_id()
+		if dash_hits.has(id):
+			continue
+		if position.distance_to(e.position) < radius + e.radius + 8.0:
+			dash_hits.append(id)
+			main.hit_enemy(e, PHASE_DASH_DAMAGE * damage_mult(), dash_dir)
+			main.fx.burst(e.position, COLOR, 8, 260, 2.5, 0.3)
+			if e.dead:
+				dash_cd = 0.0
 
 
 func shoot() -> void:
 	var muzzle := position + aim * (radius + 10)
 	var m := level("multi")
 	var dmg := damage_mult()
+	var jit := RAPID_SPREAD * level("rapid")
 	var col: Color = main.WEAPONS[weapon]["color"]
 	fire_cd = fire_interval()
 	match weapon:
@@ -170,26 +244,37 @@ func shoot() -> void:
 			var n := 5 + m * 2
 			var spread := 0.5 + m * 0.08
 			for i in n:
-				var a := lerpf(-spread / 2, spread / 2, float(i) / (n - 1)) + randf_range(-0.05, 0.05)
-				main.spawn_player_bullet(muzzle, aim.rotated(a) * randf_range(620, 760), dmg, 4.5, 0.42, col)
+				var a := lerpf(-spread / 2, spread / 2, float(i) / (n - 1)) + randf_range(-0.05 - jit, 0.05 + jit)
+				main.spawn_player_bullet(muzzle, aim.rotated(a) * randf_range(620, 760), dmg, 4.5, 0.5, col)
 			main.sfx.play("shotgun")
 			vel -= aim * 90.0
-			main.add_shake(4.0)
+			if is_local():
+				main.add_shake(4.0)
 		"laser":
 			var n := 1 + m
 			for i in n:
-				main.fire_laser(muzzle, aim.rotated((i - (n - 1) / 2.0) * 0.09), 2.2 * dmg, col)
+				main.fire_laser(position + aim * 4.0, aim.rotated((i - (n - 1) / 2.0) * 0.09 + randf_range(-jit, jit)), 2.2 * dmg, col)
 			main.sfx.play("laser")
 			vel -= aim * 40.0
-			main.add_shake(2.5)
+			if is_local():
+				main.add_shake(2.5)
 		_:
-			var n := 1 + m
-			for i in n:
-				var a := (i - (n - 1) / 2.0) * 0.11 + randf_range(-0.04, 0.04)
-				main.spawn_player_bullet(muzzle, aim.rotated(a) * 780.0, dmg, 5.0, 1.4, col)
+			# Aimed shot at full damage; MULTISHOT adds weaker side shots (odd levels alternate sides).
+			var shots: Array = [[0.0, dmg]]
+			var side := dmg * PULSE_SIDE_DAMAGE
+			if m >= 2:
+				shots.append([-0.11, side])
+				shots.append([0.11, side])
+			if m % 2 == 1:
+				side_flip = -side_flip
+				shots.append([(0.11 if m == 1 else 0.22) * side_flip, side])
+			for sh in shots:
+				var a: float = sh[0] + randf_range(-0.04 - jit, 0.04 + jit)
+				main.spawn_player_bullet(muzzle, aim.rotated(a) * 780.0, sh[1], 5.0 if sh[0] == 0.0 else 4.0, 1.4, col)
 			main.sfx.play("shoot")
 			vel -= aim * 18.0
-			main.add_shake(1.2)
+			if is_local():
+				main.add_shake(1.2)
 	main.fx.muzzle(muzzle, aim, col)
 
 
@@ -199,9 +284,12 @@ func hurt(dmg: int) -> bool:
 		return false
 	if shield_up:
 		shield_up = false
-		shield_cd = SHIELD_CD
+		shield_cd = SHIELD_CD_REACTIVE if level("reactive") > 0 else SHIELD_CD
+		if level("reactive") > 0:
+			main.reactive_blast(position)
 		invuln = 0.8
-		main.add_shake(6)
+		if is_local():
+			main.add_shake(6)
 		main.fx.ring(position, 70, Color(0.6, 0.95, 1), 0.4)
 		main.fx.burst(position, Color(0.6, 0.95, 1), 18, 260, 3.0, 0.4)
 		main.sfx.play("shield")
@@ -209,19 +297,20 @@ func hurt(dmg: int) -> bool:
 	hp -= dmg
 	invuln = 1.1
 	main.combo = 0
-	main.add_shake(12)
+	if is_local():
+		main.add_shake(12)
 	main.fx.burst(position, Color(1, 0.35, 0.4), 22, 280, 3.5, 0.5)
 	main.sfx.play("hurt")
 	if hp <= 0:
 		dead = true
-		main.on_player_dead()
+		main.on_player_dead(self)
 	return true
 
 
 func _draw() -> void:
 	if invuln > 0 and dash_t <= 0 and int(invuln * 18) % 2 == 0:
 		return
-	var body := COLOR
+	var body := ship_color()
 	if rapid > 0:
 		body = body.lerp(Color(1, 0.9, 0.3), 0.5 + 0.5 * sin(anim * 14))
 	draw_circle(Vector2.ZERO, radius + 9, Color(body, 0.10))

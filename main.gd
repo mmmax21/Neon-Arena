@@ -10,15 +10,28 @@ const HudScript := preload("res://scripts/hud.gd")
 const SfxScript := preload("res://scripts/sfx.gd")
 const ArenaScript := preload("res://scripts/arena.gd")
 const TouchScript := preload("res://scripts/touch.gd")
+const NetScript := preload("res://scripts/net.gd")
+const CoopScript := preload("res://scripts/coop.gd")
 const I18n := preload("res://scripts/i18n.gd")
 const FONT_ZH := preload("res://fonts/NotoSansSC-Medium.subset.otf")
 
 const W := 1280.0
 const H := 720.0
-const ARENA := Rect2(30, 30, 1220, 660)
-const VERSION := "2.1"
+## W×H is the screen frame the HUD is laid out in. The arena is 1.4× larger than that frame
+## and the camera follows the player, leading toward the aim (Nuclear Throne-style).
+const ARENA := Rect2(30, 30, 1708, 924)
+const WORLD := Vector2(1768, 984)
+const CAM_LEAD := 90.0      # px the camera looks ahead along the aim
+const CAM_FOLLOW := 7.0     # higher = snappier
+const CAM_EDGE := 40.0      # how much outside the arena wall the view may show
+const VERSION := "2.2"
 ## v1 stored its best score in user://best.save; v2 keeps its own so the two web builds don't mix scores.
 const SAVE_PATH := "user://best_v2.save"
+## Best scores per control category. The single score in SAVE_PATH is migrated to "kbm" once.
+const BEST_PATH := "user://best_v2_modes.cfg"
+## Score categories, from least to most aim assistance. A run counts in the most assisted
+## category used at any point during it.
+const CAT_RANK := {"kbm": 0, "twin": 1, "hybrid": 2, "auto": 3}
 const SETTINGS_PATH := "user://settings.cfg"
 const LANGS := ["en", "zh"]
 ## An upgrade card is offered after every this many cleared waves.
@@ -26,7 +39,7 @@ const UPGRADE_EVERY := 3
 const SEG_RADIUS := 11.0
 
 # Order matters: hud.gd mirrors these values.
-enum State { TITLE, PLAYING, PAUSED, GAMEOVER, SELECT, UPGRADE }
+enum State { TITLE, PLAYING, PAUSED, GAMEOVER, SELECT, UPGRADE, BOARD, LOBBY }
 
 const WEAPON_ORDER := ["pulse", "scatter", "laser"]
 const WEAPONS := {
@@ -52,21 +65,67 @@ const UPGRADES := {
 	"vital": {"max": 4, "cat": "survival"},
 	"shield": {"max": 1, "cat": "survival"},
 	"magnet": {"max": 2, "cat": "survival"},
+	# Evolutions: offered (and always offered) once every requirement is owned at the given level.
+	"phase": {"max": 1, "cat": "evo", "req": {"quick": 3, "shock": 1}},
+	"reactive": {"max": 1, "cat": "evo", "req": {"shield": 1, "vital": 2}},
+	"inferno": {"max": 1, "cat": "evo", "req": {"trail": 1, "quick": 1}},
+	"storm": {"max": 1, "cat": "evo", "req": {"magnet": 2, "vital": 1}},
 }
-const CAT_ORDER := ["fire", "ballistic", "dash", "survival"]
+const CAT_ORDER := ["fire", "ballistic", "dash", "survival", "evo"]
 const CAT_COLORS := {"fire": Color(1, 0.5, 0.3), "ballistic": Color(1, 0.9, 0.35),
-	"dash": Color(0.35, 0.9, 1), "survival": Color(0.45, 1, 0.55), "bonus": Color(1, 0.5, 0.8)}
+	"dash": Color(0.35, 0.9, 1), "survival": Color(0.45, 1, 0.55), "bonus": Color(1, 0.5, 0.8),
+	"evo": Color(1, 0.45, 1)}
+const INFERNO_LIFE := 2.8
+const STORM_RADIUS := 160.0
+const REACTIVE_RADIUS := 150.0
 
 ## type, first wave, weight
 const ENEMY_TABLE := [
 	["chaser", 1, 10], ["shooter", 2, 4], ["splitter", 3, 3], ["tank", 3, 2],
 	["dodger", 4, 3], ["sentry", 5, 2], ["layer", 6, 2], ["snake", 7, 1],
 ]
+## Waves stop growing in head count here; later waves get harder through HP, elites and mixes.
+const MAX_WAVE_ENEMIES := 24
+## At most this many enemies (plus warning markers) on the field; the rest of the wave waits
+## in the queue and walks in as earlier ones die (Brotato-style trickle instead of a flood).
+const MAX_ALIVE := 22
+const MAX_ALIVE_TOUCH := 18
+## Enemies push each other apart so packs read as individuals, not one blob.
+const SEPARATION := 0.55
+## From this wave on, each arena layout favours enemies that play off its mechanism.
+const ARENA_MIX_WAVE := 10
+const ARENA_MIX := {
+	"classic": {"splitter": 2.0, "shooter": 1.5},
+	"cross": {"snake": 3.0, "tank": 1.5},       # snakes thread the corridors
+	"ring": {"dodger": 2.5, "chaser": 1.5},     # dodgers sidestep into live fences
+	"fortress": {"layer": 3.0, "shooter": 1.5}, # belts carry the mines around
+	"portals": {"shooter": 2.0, "dodger": 1.5}, # shots arrive through the other gate
+	"open": {"sentry": 2.5, "shooter": 1.5},    # no cover from sentry beams
+}
+## Extra per-wave caps on top of the normal ones while a mix is active.
+const ARENA_MIX_CAPS := {"cross": {"snake": 1}, "fortress": {"layer": 2}, "open": {"sentry": 1}}
+## Spike waves: a themed roster replaces the usual mix. count/interval scale the normal values;
+## fill replaces anything over its cap.
+const SPIKE_WAVES := {
+	"swarm": {"types": {"chaser": 1.0}, "count": 1.5, "interval": 0.5, "fill": "chaser"},
+	"siege": {"types": {"shooter": 3.0, "sentry": 2.0, "layer": 2.0}, "count": 0.7, "interval": 1.0, "fill": "shooter"},
+	"heavy": {"types": {"tank": 2.0, "splitter": 3.0}, "count": 0.55, "interval": 1.2, "fill": "splitter"},
+}
+const SPIKE_FROM := 8
+const SPIKE_CHANCE := 0.3
+## Breather waves shrink the roster: right after a boss, and on the first wave of a new layout.
+const BREATHER_AFTER_BOSS := 0.6
+const BREATHER_NEW_ARENA := 0.8
+## Card offers: an eligible upgrade that wasn't shown gains this much weight per offer (capped).
+const PITY_STEP := 0.5
+const PITY_MAX := 4
 const ELITE_TYPES := ["chaser", "shooter", "tank", "splitter", "dodger", "sentry", "layer"]
 const ELITE_AFFIXES := ["shield", "haste", "volatile"]
 
 var state: int = State.TITLE
-var player: Node2D = null
+var player: Node2D = null  # the ship this device controls
+var players: Array = []  # every ship in the run (index = co-op slot)
+var coop: Node
 var weapon := "pulse"
 var enemies: Array = []
 var bullets: Array = []
@@ -86,11 +145,37 @@ var clear_timer := 0.0
 var offer: Array[String] = []
 var card_lock := 0.0
 var score := 0
-var best := 0
+var bests := {"kbm": 0, "twin": 0, "hybrid": 0, "auto": 0}
+var run_cat := "kbm"
+## Best score of the category on screen: this run's during play, the current input's on the title.
+var best: int:
+	get:
+		return int(bests.get(score_cat(), 0))
+# Flow field toward the player on a coarse grid, for enemies that got stuck behind walls.
+const FLOW_CELL := 40.0
+const FLOW_CLEAR := 18.0
+const FLOW_CLEAR_BIG := 28.0
+const FLOW_EVERY := 0.4
+var flow := PackedInt32Array()
+## Same field with extra clearance, for bodies wider than FLOW_CLEAR (tanks).
+var flow_big := PackedInt32Array()
+var flow_w := 0
+var flow_h := 0
+var flow_t := 0.0
+var boss_shift_t := 0.0  # countdown to switching to the coming boss's arena
+var wave_kind := ""  # "", "breather", or a SPIKE_WAVES key
+var last_spike := -10
+var offer_misses := {}  # upgrade id -> offers in a row it was eligible but not shown
 var kills := 0
 var combo := 0
 var combo_timer := 0.0
 var shake := 0.0
+var shake_t := 0.0
+var shake_setting := "full"  # full / low / off
+const SHAKE_LEVELS := ["full", "low", "off"]
+const SHAKE_SCALE := {"full": 1.0, "low": 0.35, "off": 0.0}
+const SHAKE_TOUCH := 0.6  # small screens: the same pixel shake reads much stronger
+const SHAKE_DECAY := 6.5  # per second, exponential: instant kick, smooth tail
 var gameover_timer := 0.0
 var time_alive := 0.0
 var boss: Node2D = null
@@ -100,6 +185,14 @@ var muted := false
 var touch_mode_setting := "hybrid"
 
 var arena: Node2D
+var net: Node
+# Leaderboard screen
+var board_platform := "pc"
+var board_mode := "kbm"
+var board_period := "all"
+var board_back: int = State.TITLE
+var board_refresh := 0.0
+const BOARD_REFRESH := 15.0
 var layer_pickups: Node2D
 var layer_enemies: Node2D
 var layer_bullets: Node2D
@@ -116,7 +209,7 @@ func _ready() -> void:
 	load_best()
 	load_settings()
 	camera = Camera2D.new()
-	camera.position = Vector2(W / 2, H / 2)
+	camera.position = ARENA.get_center()
 	add_child(camera)
 	camera.make_current()
 	arena = ArenaScript.new()
@@ -131,16 +224,22 @@ func _ready() -> void:
 	add_child(fx)
 	sfx = SfxScript.new()
 	add_child(sfx)
+	net = NetScript.new()
+	net.main = self
+	add_child(net)
+	coop = CoopScript.new()
+	coop.main = self
+	add_child(coop)
 	var cl := CanvasLayer.new()
 	add_child(cl)
 	hud = HudScript.new()
 	hud.main = self
 	cl.add_child(hud)
-	hud.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	touch = TouchScript.new()
 	touch.main = self
 	cl.add_child(touch)
-	touch.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_layout_ui()
+	get_viewport().size_changed.connect(_layout_ui)
 	touch.set_mode(touch_mode_setting)
 	Input.mouse_mode = Input.MOUSE_MODE_HIDDEN
 	arena.reset()
@@ -177,11 +276,19 @@ func start_game() -> void:
 	fx.clear()
 	arena.reset()
 	touch.reset()
-	player = PlayerScript.new()
-	player.main = self
-	player.weapon = weapon
-	player.position = Vector2(W / 2, H / 2)
-	layer_player.add_child(player)
+	players.clear()
+	player = _make_ship(0, weapon, ARENA.get_center())
+	if coop.is_host() and coop.peer_here:
+		var rp := _make_ship(1, coop.peer_weapon, ARENA.get_center() + Vector2(60, 0))
+		rp.remote = true
+		rp.net_in["pos"] = rp.position
+		player.position += Vector2(-60, 0)
+	fx.record = coop.is_host()
+	sfx.record = coop.is_host()
+	fx.events.clear()
+	sfx.events.clear()
+	coop.local_picked = false
+	coop.peer_picked = true
 	score = 0
 	kills = 0
 	wave = 0
@@ -190,13 +297,164 @@ func start_game() -> void:
 	time_alive = 0.0
 	clear_timer = 0.0
 	waves_since_upgrade = 0
+	boss_shift_t = 0.0
+	wave_kind = ""
+	last_spike = -10
+	offer_misses.clear()
+	run_cat = input_cat()
+	if not coop.active():
+		net.start_run()
 	boss = null
 	intermission = 1.2
 	state = State.PLAYING
+	snap_camera()
 	sfx.play("pickup")
 
 
-func on_player_dead() -> void:
+func _make_ship(slot: int, w: String, pos: Vector2) -> Node2D:
+	var p := PlayerScript.new()
+	p.main = self
+	p.slot = slot
+	p.weapon = w
+	p.position = pos
+	layer_player.add_child(p)
+	players.append(p)
+	return p
+
+
+# ---------------------------------------------------------------- co-op
+
+func is_guest() -> bool:
+	return coop != null and coop.is_guest()
+
+
+func is_host() -> bool:
+	return coop != null and coop.is_host()
+
+
+## Ships that enemies, bullets and hazards can hurt. On a guest nothing is hurt locally:
+## the host decides and sends the result.
+func hurtable_players() -> Array:
+	if is_guest():
+		return []
+	return players.filter(func(p): return is_instance_valid(p) and not p.dead)
+
+
+## Closest living ship (enemies chase it); falls back to our own ship.
+func nearest_player(p: Vector2) -> Node2D:
+	var best: Node2D = player
+	var best_d := INF
+	for s in players:
+		if is_instance_valid(s) and not s.dead:
+			var d := p.distance_squared_to(s.position)
+			if d < best_d:
+				best_d = d
+				best = s
+	return best
+
+
+func remote_player() -> Node2D:
+	for p in players:
+		if is_instance_valid(p) and p.remote:
+			return p
+	return null
+
+
+func player_by_slot(slot: int) -> Node2D:
+	for p in players:
+		if is_instance_valid(p) and p.slot == slot:
+			return p
+	return null
+
+
+func open_lobby() -> void:
+	state = State.LOBBY
+	card_lock = 0.3
+
+
+## Host: the guest left mid-run. Their ship disappears and the run goes on.
+func drop_remote() -> void:
+	var rp := remote_player()
+	if rp:
+		fx.burst(rp.position, rp.ship_color(), 30, 260, 3.0, 0.6)
+		players.erase(rp)
+		rp.queue_free()
+		hud.announce(t("coop_peer_left"), Color(1, 0.6, 0.4))
+		if not coop.peer_picked:
+			remote_pick(-1)
+		if state == State.PLAYING and hurtable_players().is_empty():
+			on_player_dead(player)
+
+
+## Guest: the host is gone; leave the run.
+func coop_ended(key: String) -> void:
+	for layer in [layer_pickups, layer_enemies, layer_player, layer_bullets]:
+		for c in layer.get_children():
+			c.queue_free()
+	enemies.clear()
+	bullets.clear()
+	pickups.clear()
+	players.clear()
+	player = null
+	boss = null
+	spawn_markers.clear()
+	hazards.clear()
+	offer.clear()
+	state = State.LOBBY
+	hud.announce(t(key), Color(1, 0.5, 0.4))
+
+
+## Guest: the host started a run. Our ship is slot 1 and moves locally.
+func start_client_game(my_weapon: String, host_weapon: String) -> void:
+	for layer in [layer_pickups, layer_enemies, layer_player, layer_bullets]:
+		for c in layer.get_children():
+			c.queue_free()
+	enemies.clear()
+	bullets.clear()
+	pickups.clear()
+	new_enemies.clear()
+	new_bullets.clear()
+	hazards.clear()
+	spawn_markers.clear()
+	offer.clear()
+	fx.clear()
+	coop._clear_guest_world()
+	touch.reset()
+	players.clear()
+	_make_ship(0, host_weapon, ARENA.get_center() + Vector2(-60, 0))
+	player = _make_ship(1, my_weapon, ARENA.get_center() + Vector2(60, 0))
+	player.client = true
+	weapon = my_weapon
+	score = 0
+	kills = 0
+	wave = 0
+	combo = 0
+	time_alive = 0.0
+	boss = null
+	run_cat = input_cat()
+	state = State.PLAYING
+	snap_camera()
+	sfx.play("pickup")
+
+
+func update_client(delta: float) -> void:
+	if player and not player.dead:
+		player.update(delta)
+	arena.update(delta)
+	coop.guest_step(delta)
+
+
+func on_player_dead(who: Node2D = null) -> void:
+	if who and who != player or (who == player and players.size() > 1):
+		# Co-op: a ship is down; the run ends only when nobody is left.
+		if who:
+			fx.burst(who.position, who.ship_color(), 50, 360, 4, 0.9)
+			fx.ring(who.position, 160, who.ship_color(), 0.6)
+			who.visible = false
+			sfx.play("explode_big")
+		if not hurtable_players().is_empty():
+			hud.announce(t("coop_down"), Color(1, 0.5, 0.6))
+			return
 	state = State.GAMEOVER
 	gameover_timer = 0.0
 	fx.burst(player.position, Color(0.3, 0.9, 1.0), 80, 420, 5, 1.1)
@@ -204,9 +462,12 @@ func on_player_dead() -> void:
 	add_shake(22)
 	sfx.play("explode_big")
 	player.visible = false
-	if score > best:
-		best = score
+	if coop.active():
+		return  # co-op runs don't go on the solo leaderboards
+	if score > int(bests.get(run_cat, 0)):
+		bests[run_cat] = score
 		save_best()
+	net.submit_run(run_cat, score, wave, kills, int(time_alive), weapon)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -223,6 +484,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			pick = k - KEY_1
 		elif k >= KEY_KP_1 and k <= KEY_KP_3:
 			pick = k - KEY_KP_1
+		if (k == KEY_P or k == KEY_ESCAPE) and state == State.LOBBY:
+			coop.leave()
+			state = State.TITLE
+			return
+		if (k == KEY_P or k == KEY_ESCAPE) and coop.in_game:
+			return  # no pausing a shared run
 		if k == KEY_P or k == KEY_ESCAPE:
 			if state == State.PLAYING:
 				state = State.PAUSED
@@ -233,13 +500,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			elif state == State.SELECT and k == KEY_ESCAPE:
 				state = State.TITLE
 				return
+			elif state == State.BOARD:
+				close_board()
+				return
 		if k == KEY_M:
 			set_muted(not muted)
+			return
+		if k == KEY_K:
+			cycle_shake()
 			return
 		if k == KEY_L:
 			set_lang(LANGS[(LANGS.find(lang) + 1) % LANGS.size()])
 			return
-		if k == KEY_R and state == State.GAMEOVER and gameover_timer > 0.6:
+		if k == KEY_R and state == State.GAMEOVER and gameover_timer > 0.6 and not coop.in_game:
 			start_game()
 			return
 	match state:
@@ -255,10 +528,13 @@ func _unhandled_input(event: InputEvent) -> void:
 				choose_upgrade(pick)
 		State.GAMEOVER:
 			if confirm and gameover_timer > 0.8:
-				open_select()
+				_after_gameover()
 		State.PAUSED:
 			if confirm:
 				state = State.PLAYING
+		State.BOARD:
+			if confirm:
+				close_board()
 
 
 ## A left click, or a touch tap outside play (touch.gd sends those on release).
@@ -269,8 +545,21 @@ func press_at(pos: Vector2) -> void:
 	if touch.active and hud.ctrl_at(pos):
 		touch.cycle_mode()
 		return
+	if hud.shake_at(pos):
+		cycle_shake()
+		return
 	var pick: int = hud.card_at(pos)
+	if (state == State.TITLE or state == State.GAMEOVER) and not coop.in_game and hud.board_button_at(pos):
+		open_board()
+		return
+	if state == State.TITLE and hud.coop_button_at(pos):
+		open_lobby()
+		return
 	match state:
+		State.LOBBY:
+			_lobby_press(pos)
+		State.BOARD:
+			_board_press(pos)
 		State.TITLE:
 			var l: String = hud.lang_at(pos)
 			if l != "":
@@ -286,12 +575,57 @@ func press_at(pos: Vector2) -> void:
 				choose_upgrade(pick)
 		State.GAMEOVER:
 			if gameover_timer > 0.8:
-				open_select()
+				_after_gameover()
 		State.PAUSED:
 			state = State.PLAYING
 		State.PLAYING:
 			if player:
 				player.fire_queued = true
+
+
+func _after_gameover() -> void:
+	if coop.active():
+		coop.in_game = false
+		fx.record = false
+		sfx.record = false
+		open_lobby()
+	else:
+		open_select()
+
+
+func _lobby_press(pos: Vector2) -> void:
+	if card_lock > 0:
+		return
+	for b in hud.lobby_buttons():
+		if not (b["rect"] as Rect2).has_point(pos) or not b.get("on", true):
+			continue
+		match b["kind"]:
+			"create":
+				coop.create_room()
+			"join":
+				var c := _ask_code()
+				if c != "":
+					coop.join_room(c)
+			"start":
+				coop.host_start()
+			"leave":
+				coop.leave()
+			"back":
+				coop.leave()
+				state = State.TITLE
+			"weapon":
+				weapon = b["value"]
+				coop.send_weapon()
+				sfx.play("card")
+		return
+
+
+func _ask_code() -> String:
+	if not OS.has_feature("web"):
+		return ""
+	var q: String = t("coop_code_prompt").replace("\\", "\\\\").replace("'", "\\'")
+	var v = JavaScriptBridge.eval("prompt('%s', '') || ''" % q, true)
+	return v if v is String else ""
 
 
 ## Where the HUD treats the pointer as being: the mouse, or a held touch in touch mode.
@@ -302,7 +636,7 @@ func pointer_pos() -> Vector2:
 
 
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and state == State.PLAYING:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT and state == State.PLAYING and not coop.in_game:
 		state = State.PAUSED
 
 
@@ -312,25 +646,191 @@ func _process(delta: float) -> void:
 	match state:
 		State.PLAYING:
 			update_game(delta)
+		State.BOARD:
+			board_refresh -= delta
+			if board_refresh <= 0:
+				_fetch_board()
 		State.GAMEOVER:
 			gameover_timer += delta
-			_update_bullets(delta)
-			_sweep()
+			if is_guest():
+				coop.guest_step(delta)
+			else:
+				_update_bullets(delta)
+				_sweep()
+		State.UPGRADE:
+			if is_guest():
+				coop.guest_step(delta)
 	if state != State.PAUSED:
 		fx.update(delta)
-	shake = maxf(0.0, shake - delta * 40.0)
-	camera.offset = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake
+	# Smooth shake: the kick lands at once and dies away exponentially; the offset follows
+	# layered sine waves instead of per-frame random jumps, so it reads as a jolt, not jitter.
+	shake *= exp(-SHAKE_DECAY * delta)
+	if shake < 0.3:
+		shake = 0.0
+	shake_t += delta
+	var wob := Vector2(sin(shake_t * 47.0) + 0.5 * sin(shake_t * 83.0 + 1.3),
+		sin(shake_t * 53.0 + 2.1) + 0.5 * sin(shake_t * 71.0 + 0.4)) / 1.5
+	camera.offset = wob * shake
+	_update_camera(delta)
 	hud.queue_redraw()
 
 
+func _camera_target() -> Vector2:
+	if player == null or not is_instance_valid(player):
+		return ARENA.get_center()
+	if player.dead and players.size() > 1:
+		var mate := nearest_player(player.position)
+		return mate.position
+	return player.position + player.aim * CAM_LEAD
+
+
+## Keeps the view inside the arena (plus a thin border); if the screen is wider/taller than
+## the arena on an axis, centres on it instead.
+func _clamp_camera(c: Vector2) -> Vector2:
+	var half := get_viewport_rect().size / 2.0
+	var lo := ARENA.position - Vector2(CAM_EDGE, CAM_EDGE) + half
+	var hi := ARENA.end + Vector2(CAM_EDGE, CAM_EDGE) - half
+	var mid := ARENA.get_center()
+	c.x = mid.x if lo.x > hi.x else clampf(c.x, lo.x, hi.x)
+	c.y = mid.y if lo.y > hi.y else clampf(c.y, lo.y, hi.y)
+	return c
+
+
+func _update_camera(delta: float) -> void:
+	if state == State.PLAYING:
+		var k := 1.0 - exp(-CAM_FOLLOW * delta)
+		camera.position = _clamp_camera(camera.position.lerp(_camera_target(), k))
+	elif state == State.TITLE or state == State.SELECT:
+		camera.position = _clamp_camera(ARENA.get_center())
+	else:
+		camera.position = _clamp_camera(camera.position)
+
+
+func snap_camera() -> void:
+	camera.position = _clamp_camera(_camera_target())
+
+
+## World point -> HUD/touch layer coordinates (those layers sit at view_offset()).
+func world_to_hud(p: Vector2) -> Vector2:
+	return get_viewport().get_canvas_transform() * p - view_offset()
+
+
+## Visible world rectangle (without shake).
+func view_rect() -> Rect2:
+	var sz := get_viewport_rect().size
+	return Rect2(camera.position - sz / 2.0, sz)
+
+
+# ---------------------------------------------------------------- leaderboard screen
+
+func open_board() -> void:
+	board_back = state
+	board_platform = net.platform
+	board_mode = run_cat if state == State.GAMEOVER else input_cat()
+	board_period = "all"
+	state = State.BOARD
+	card_lock = 0.3
+	_fetch_board()
+
+
+func close_board() -> void:
+	state = board_back
+
+
+func _fetch_board() -> void:
+	board_refresh = BOARD_REFRESH
+	net.fetch_board(board_platform, board_mode, board_period)
+
+
+func _board_press(pos: Vector2) -> void:
+	if card_lock > 0:
+		return
+	for b in hud.board_buttons():
+		if not (b["rect"] as Rect2).has_point(pos):
+			continue
+		match b["kind"]:
+			"platform":
+				board_platform = b["value"]
+			"mode":
+				board_mode = b["value"]
+			"period":
+				board_period = b["value"]
+			"back":
+				close_board()
+				return
+			"rename":
+				var n: String = net.ask_name()
+				if n.strip_edges() != "":
+					net.rename(n, _fetch_board)
+				return
+		_fetch_board()
+		return
+
+
+# ---------------------------------------------------------------- screen layout
+
+## The stretch mode is "expand": the 1280×720 play frame stays centred and wider or taller
+## screens show extra margin around it. HUD and touch layers cover exactly the play frame,
+## so their layout code works in frame coordinates; margins are negative x / x > W.
+const SIDE_HUD_MIN := 110.0
+
+
+func _layout_ui() -> void:
+	var off := view_offset()
+	for c in [hud, touch]:
+		c.position = off
+		c.size = Vector2(W, H)
+
+
+func view_offset() -> Vector2:
+	return ((get_viewport_rect().size - Vector2(W, H)) / 2.0).floor()
+
+
+## Width of the empty margin left and right of the play frame.
+func side_margin() -> float:
+	return maxf(view_offset().x, 0.0)
+
+
+## Phones in landscape have wide side margins: HUD and touch buttons move there so
+## thumbs and readouts stop covering the arena.
+func side_hud() -> bool:
+	return touch != null and touch.active and side_margin() >= SIDE_HUD_MIN
+
+
+## Control category of the input in use right now.
+func input_cat() -> String:
+	return String(touch.mode) if touch and touch.active else "kbm"
+
+
+## Category whose best score applies to what's on screen.
+func score_cat() -> String:
+	return input_cat() if state == State.TITLE or state == State.SELECT else run_cat
+
+
 func update_game(delta: float) -> void:
+	if is_guest():
+		update_client(delta)
+		return
 	time_alive += delta
-	player.update(delta)
+	var c := input_cat()
+	if int(CAT_RANK.get(c, 0)) > int(CAT_RANK.get(run_cat, 0)):
+		run_cat = c
+	var me := player
+	for p in players.duplicate():
+		if is_instance_valid(p) and not p.dead:
+			player = p  # upgrades, shots and hits below belong to this ship
+			p.update(delta)
+	player = me
 	arena.update(delta)
+	flow_t -= delta
+	if flow_t <= 0:
+		flow_t = FLOW_EVERY
+		_update_flow()
 	_update_waves(delta)
 	for e in enemies:
 		if not e.dead:
 			e.update(delta)
+	_separate_enemies(delta)
 	_update_bullets(delta)
 	_update_hazards(delta)
 	_update_pickups(delta)
@@ -346,43 +846,209 @@ func update_game(delta: float) -> void:
 func begin_wave() -> void:
 	wave += 1
 	spawn_queue.clear()
-	var n := 4 + wave * 2
+	var is_boss := wave % 5 == 0
+	wave_kind = _pick_wave_kind(is_boss)
+	var n := mini(4 + wave * 2, MAX_WAVE_ENEMIES)
 	var caps := {"tank": 2 + wave / 3, "sentry": 1 + wave / 5, "layer": 1 + wave / 6, "snake": 1 + wave / 8}
+	var weights := _wave_weights()
+	var fill := "chaser"
+	var interval := maxf(0.22, 0.85 - wave * 0.05)
+	if SPIKE_WAVES.has(wave_kind):
+		var s: Dictionary = SPIKE_WAVES[wave_kind]
+		weights = s["types"]
+		fill = s["fill"]
+		n = roundi(n * float(s["count"]))
+		interval *= float(s["interval"])
+		for k in caps:
+			caps[k] = ceili(int(caps[k]) * 1.5)
+	elif wave_kind == "breather":
+		n = roundi(n * (BREATHER_AFTER_BOSS if (wave - 1) % 5 == 0 else BREATHER_NEW_ARENA))
+	elif wave >= ARENA_MIX_WAVE:
+		var extra: Dictionary = ARENA_MIX_CAPS.get(arena.layout, {})
+		for k in extra:
+			caps[k] = int(caps[k]) + int(extra[k])
 	var counts := {}
 	var list: Array[String] = []
 	for i in n:
-		var t := _roll_enemy()
+		var t := _roll_from(weights)
 		if caps.has(t) and int(counts.get(t, 0)) >= int(caps[t]):
-			t = "chaser"
+			t = fill
 		counts[t] = int(counts.get(t, 0)) + 1
 		list.append(t)
 	list.shuffle()
-	if wave % 5 == 0:
-		var bt: String = ["boss", "boss2"][(wave / 5 - 1) % 2]
+	if is_boss:
+		var bt: String = boss_type(wave)
 		list.push_front(bt)
 		hud.announce(t("wave_boss") % [wave, t("boss_" + bt)], Color(1, 0.3, 0.6))
+	elif SPIKE_WAVES.has(wave_kind):
+		hud.announce(t("wave_spike") % [wave, t("spike_" + wave_kind)], Color(1, 0.6, 0.2))
+		sfx.play("charge")
 	else:
 		hud.announce(t("wave") % wave, Color(0.4, 0.95, 1))
 	spawn_queue = list
-	spawn_interval = maxf(0.22, 0.85 - wave * 0.05)
+	spawn_interval = interval
 	spawn_timer = 0.3
 
 
-func _roll_enemy() -> String:
-	var total := 0
+## Tension and release: breathers after a boss and on a fresh layout, occasional spike waves.
+func _pick_wave_kind(is_boss: bool) -> String:
+	if is_boss:
+		return ""
+	if wave > 5 and (wave - 1) % 5 == 0:
+		return "breather"
+	if wave > UPGRADE_EVERY and waves_since_upgrade == 0:
+		return "breather"
+	if wave >= SPIKE_FROM and wave - last_spike >= 3 and randf() < SPIKE_CHANCE:
+		last_spike = wave
+		var kinds := SPIKE_WAVES.keys()
+		return kinds[randi() % kinds.size()]
+	return ""
+
+
+## Spawn weights for the current wave: unlocked enemies, scaled by the layout's mix late on.
+func _wave_weights() -> Dictionary:
+	var mix: Dictionary = ARENA_MIX.get(arena.layout, {}) if wave >= ARENA_MIX_WAVE else {}
+	var out := {}
 	for row in ENEMY_TABLE:
 		if wave >= row[1]:
-			total += row[2]
-	var r := randi() % total
-	for row in ENEMY_TABLE:
-		if wave >= row[1]:
-			r -= row[2]
-			if r < 0:
-				return row[0]
-	return "chaser"
+			out[row[0]] = float(row[2]) * float(mix.get(row[0], 1.0))
+	return out
+
+
+func _roll_from(weights: Dictionary) -> String:
+	var total := 0.0
+	for k in weights:
+		total += float(weights[k])
+	var r := randf() * total
+	for k in weights:
+		r -= float(weights[k])
+		if r < 0:
+			return k
+	return weights.keys()[0]
+
+
+func _update_flow() -> void:
+	flow_w = int(ceil(ARENA.size.x / FLOW_CELL))
+	flow_h = int(ceil(ARENA.size.y / FLOW_CELL))
+	flow = _build_flow(FLOW_CLEAR)
+	flow_big = _build_flow(FLOW_CLEAR_BIG)
+
+
+func _build_flow(clear: float) -> PackedInt32Array:
+	var flow := PackedInt32Array()
+	flow.resize(flow_w * flow_h)
+	flow.fill(-1)
+	var blocked := PackedByteArray()
+	blocked.resize(flow_w * flow_h)
+	blocked.fill(0)  # resize() leaves new bytes uninitialised
+	for y in flow_h:
+		for x in flow_w:
+			var c := _flow_center(x, y)
+			for ob in obstacles:
+				if c.distance_to(Vector2(ob.x, ob.y)) < ob.z + clear:
+					blocked[y * flow_w + x] = 1
+					break
+	var queue: Array[Vector2i] = []
+	for s in hurtable_players() if not hurtable_players().is_empty() else [player]:
+		var st := _flow_start(blocked, _flow_cell(s.position))
+		if st.x >= 0 and flow[st.y * flow_w + st.x] != 0:
+			flow[st.y * flow_w + st.x] = 0
+			queue.append(st)
+	if queue.is_empty():
+		return flow
+	var head := 0
+	while head < queue.size():
+		var c: Vector2i = queue[head]
+		head += 1
+		var d := flow[c.y * flow_w + c.x]
+		for o in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+			var n: Vector2i = c + o
+			if n.x < 0 or n.y < 0 or n.x >= flow_w or n.y >= flow_h:
+				continue
+			var i := n.y * flow_w + n.x
+			if flow[i] != -1 or blocked[i] == 1:
+				continue
+			flow[i] = d + 1
+			queue.append(n)
+	return flow
+
+
+## BFS origin for a ship's cell (multi-source: every living ship is a target).
+func _flow_start(blocked: PackedByteArray, player_cell: Vector2i) -> Vector2i:
+	if player_cell.x < 0:
+		return Vector2i(-1, -1)
+	# The player can stand in a cell marked blocked when the coarse grid overlaps
+	# a nearby pillar. Starting BFS there would strand the whole field because
+	# every adjacent cell may also be blocked. Snap the origin to the nearest
+	# walkable cell so enemies can still route around the obstacle.
+	var start := Vector2i(-1, -1)
+	var start_dist := 1 << 30
+	for y in flow_h:
+		for x in flow_w:
+			var i := y * flow_w + x
+			if blocked[i] == 1:
+				continue
+			var d := Vector2i(x, y).distance_squared_to(player_cell)
+			if d < start_dist:
+				start_dist = d
+				start = Vector2i(x, y)
+	return start
+
+
+func _flow_center(x: int, y: int) -> Vector2:
+	return ARENA.position + Vector2((x + 0.5) * FLOW_CELL, (y + 0.5) * FLOW_CELL)
+
+
+func _flow_cell(p: Vector2) -> Vector2i:
+	var x := int((p.x - ARENA.position.x) / FLOW_CELL)
+	var y := int((p.y - ARENA.position.y) / FLOW_CELL)
+	if x < 0 or y < 0 or x >= flow_w or y >= flow_h:
+		return Vector2i(-1, -1)
+	return Vector2i(x, y)
+
+
+## Direction to walk from p to reach the player around obstacles (ZERO if unknown).
+func flow_dir(p: Vector2, big := false) -> Vector2:
+	var flow := flow_big if big and not flow_big.is_empty() else self.flow
+	if flow.is_empty():
+		return Vector2.ZERO
+	var c := _flow_cell(p)
+	if c.x < 0:
+		return Vector2.ZERO
+	var here := flow[c.y * flow_w + c.x]
+	# Wedged against pillars, the own cell and its ring may all be blocked: widen the search.
+	for reach in [1, 2, 3]:
+		var best := Vector2i(-1, -1)
+		var best_d := here if here >= 0 else 1 << 30
+		for oy in range(-reach, reach + 1):
+			for ox in range(-reach, reach + 1):
+				var n := c + Vector2i(ox, oy)
+				if (ox == 0 and oy == 0) or n.x < 0 or n.y < 0 or n.x >= flow_w or n.y >= flow_h:
+					continue
+				var d := flow[n.y * flow_w + n.x]
+				if d >= 0 and d < best_d:
+					best_d = d
+					best = n
+		if best.x >= 0:
+			return (_flow_center(best.x, best.y) - p).normalized()
+	return Vector2.ZERO
+
+
+func boss_type(w: int) -> String:
+	return ["boss", "boss2"][(w / 5 - 1) % 2]
+
+
+## Each boss fights on the layout built for it: CORE WARDEN pulls the player in on the open
+## field; VOID WEAVER's sweeping beams are blocked by the classic layout's pillars.
+func _shift_to_boss_arena(w: int) -> void:
+	if arena.shift_to(arena.BOSS_LAYOUTS[boss_type(w)]):
+		hud.announce(t("arena_boss") % arena.display_name(), Color(1, 0.4, 0.65))
+		sfx.play("charge")
 
 
 func _roll_elite(t: String) -> String:
+	if wave_kind == "breather":
+		return ""
 	if wave < 7 or not ELITE_TYPES.has(t):
 		return ""
 	if randf() < minf(0.05 * (wave - 6), 0.35):
@@ -397,12 +1063,16 @@ func _update_waves(delta: float) -> void:
 			open_upgrade()
 		return
 	if intermission > 0:
+		if boss_shift_t > 0:
+			boss_shift_t -= delta
+			if boss_shift_t <= 0:
+				_shift_to_boss_arena(wave + 1)
 		intermission -= delta
 		if intermission <= 0:
 			begin_wave()
 		return
 	spawn_timer -= delta
-	if spawn_timer <= 0 and not spawn_queue.is_empty():
+	if spawn_timer <= 0 and not spawn_queue.is_empty() and (spawn_queue[0].begins_with("boss") or field_count() < alive_cap()):
 		spawn_timer = spawn_interval
 		var t: String = spawn_queue.pop_front()
 		spawn_marker(t, _find_spawn_point(), 1.4 if t.begins_with("boss") else 0.9)
@@ -418,6 +1088,62 @@ func _update_waves(delta: float) -> void:
 		_on_wave_clear()
 
 
+func alive_cap() -> int:
+	return MAX_ALIVE_TOUCH if touch and touch.active else MAX_ALIVE
+
+
+## Enemies on the field plus pending warning markers; mines and boss minis don't count.
+func field_count() -> int:
+	var n := spawn_markers.size()
+	for list in [enemies, new_enemies]:
+		for e in list:
+			if not e.dead and e.type != "mine" and e.type != "mini" and not e.is_boss:
+				n += 1
+	return n
+
+
+## Soft circle-vs-circle push between enemies on a coarse spatial hash. Bosses are immovable
+## anchors; mines and turrets that sit still are skipped.
+func _separate_enemies(delta: float) -> void:
+	var cell := 64.0
+	var grid := {}
+	var movers: Array = []
+	for e in enemies:
+		if e.dead or e.type == "mine":
+			continue
+		movers.append(e)
+		var k := Vector2i(floori(e.position.x / cell), floori(e.position.y / cell))
+		if not grid.has(k):
+			grid[k] = []
+		grid[k].append(e)
+	var k_push := minf(1.0, SEPARATION * delta * 60.0)
+	for a in movers:
+		var ka := Vector2i(floori(a.position.x / cell), floori(a.position.y / cell))
+		for ox in range(-1, 2):
+			for oy in range(-1, 2):
+				var bucket = grid.get(ka + Vector2i(ox, oy))
+				if bucket == null:
+					continue
+				for b in bucket:
+					if b.get_instance_id() <= a.get_instance_id():
+						continue
+					var d: Vector2 = b.position - a.position
+					var min_d: float = (a.radius + b.radius) * 0.9
+					var l2 := d.length_squared()
+					if l2 >= min_d * min_d:
+						continue
+					var l := sqrt(l2)
+					var n: Vector2 = d / l if l > 0.01 else Vector2.from_angle(randf() * TAU)
+					var push: float = (min_d - l) * 0.5 * k_push
+					var wa := 0.0 if a.is_boss or a.type == "sentry" else 1.0
+					var wb := 0.0 if b.is_boss or b.type == "sentry" else 1.0
+					if wa + wb == 0.0:
+						continue
+					var s2 := 2.0 / (wa + wb)
+					a.position = resolve_static(a.position - n * push * wa * s2, a.radius)
+					b.position = resolve_static(b.position + n * push * wb * s2, b.radius)
+
+
 func _blocking_enemies_left() -> bool:
 	for e in enemies:
 		if not e.dead and not e.no_clear:
@@ -429,6 +1155,18 @@ func _blocking_enemies_left() -> bool:
 
 
 func _on_wave_clear() -> void:
+	for s in players:
+		if is_instance_valid(s) and s.dead:
+			# Co-op: downed ships return at the end of the wave beside a teammate.
+			s.dead = false
+			s.visible = true
+			s.hp = maxi(2, s.max_hp / 2)
+			s.invuln = 2.0
+			var mate := nearest_player(s.position)
+			s.position = resolve_static(mate.position + Vector2(50, 0), s.radius)
+			s.net_in["pos"] = s.position
+			fx.ring(s.position, 90, s.ship_color(), 0.5)
+			hud.announce(t("coop_revive"), s.ship_color())
 	var bonus := wave * 100
 	score += bonus
 	hud.announce(t("wave_clear") % bonus, Color(0.5, 1, 0.6))
@@ -445,6 +1183,9 @@ func _on_wave_clear() -> void:
 		clear_timer = 1.1
 	else:
 		intermission = 2.6
+		# The next wave is a boss: move to its arena once the clear banner has been read.
+		if (wave + 1) % 5 == 0 and arena.layout != arena.BOSS_LAYOUTS[boss_type(wave + 1)]:
+			boss_shift_t = 0.8
 
 
 func spawn_marker(t: String, p: Vector2, delay: float) -> void:
@@ -453,11 +1194,13 @@ func spawn_marker(t: String, p: Vector2, delay: float) -> void:
 
 func _find_spawn_point() -> Vector2:
 	var best_p := Vector2(ARENA.position.x + 60, ARENA.position.y + 60)
-	for i in 30:
+	for i in 40:
 		var p := Vector2(
 			randf_range(ARENA.position.x + 50, ARENA.end.x - 50),
 			randf_range(ARENA.position.y + 50, ARENA.end.y - 50))
-		if p.distance_to(player.position) < 300 or arena.near_portal(p, 50):
+		var dp := p.distance_to(nearest_player(p).position)
+		# Not on top of the player, and (mostly) not in the far corner of the bigger arena.
+		if dp < 300 or (dp > 950 and i < 30) or arena.near_portal(p, 50):
 			continue
 		if _clear_of_obstacles(p, 60):
 			return p
@@ -520,6 +1263,16 @@ func count_type(t: String) -> int:
 
 func open_upgrade() -> void:
 	offer = _roll_offer()
+	coop.local_picked = false
+	coop.peer_picked = true
+	var rp := remote_player()
+	if is_host() and rp:
+		var me := player
+		player = rp
+		coop.peer_offer = _roll_offer()
+		player = me
+		coop.peer_picked = false
+		coop.send_offer(coop.peer_offer)
 	waves_since_upgrade = 0
 	state = State.UPGRADE
 	card_lock = 0.5
@@ -534,37 +1287,167 @@ func _roll_offer() -> Array[String]:
 			continue
 		if d.has("no") and (d["no"] as Array).has(player.weapon):
 			continue
+		if d["cat"] == "evo":
+			continue
 		pool.append(id)
-	pool.shuffle()
-	var out: Array[String] = pool.slice(0, 3)
+	var eligible := pool.duplicate()
+	# Bad-luck protection: the three cards come from different categories while possible, and an
+	# upgrade that keeps being skipped by the draw grows more likely each offer.
+	var out: Array[String] = []
+	var used_cats := {}
+	# A ready evolution always takes the first slot (one at a time).
+	var evos := ready_evolutions()
+	if not evos.is_empty():
+		out.append(evos[randi() % evos.size()])
+	while out.size() < 3 and not pool.is_empty():
+		var cands: Array[String] = []
+		for id in pool:
+			if not used_cats.has(UPGRADES[id]["cat"]):
+				cands.append(id)
+		if cands.is_empty():
+			cands = pool
+		var pick := _weighted_upgrade(cands)
+		out.append(pick)
+		pool.erase(pick)
+		used_cats[UPGRADES[pick]["cat"]] = true
 	var hurt: bool = player.hp < player.max_hp
 	if hurt and (player.hp * 2 <= player.max_hp or randf() < 0.25 or out.size() < 3):
 		if out.size() >= 3:
 			out[2] = "repair"
 		else:
 			out.append("repair")
+	for id in eligible:
+		offer_misses[id] = 0 if out.has(id) else int(offer_misses.get(id, 0)) + 1
 	while out.size() < 3:
 		out.append("bonus")
 	return out
 
 
+func _weighted_upgrade(cands: Array[String]) -> String:
+	var weights := {}
+	for id in cands:
+		weights[id] = 1.0 + PITY_STEP * mini(int(offer_misses.get(id, 0)), PITY_MAX)
+	return _roll_from(weights)
+
+
 func choose_upgrade(i: int) -> void:
-	var id: String = offer[i]
+	if is_guest():
+		if coop.guest_picked:
+			return
+		coop.pick(i)
+		var gi := card_info(offer[i])
+		fx.text(player.position, gi["name"], gi["color"])
+		sfx.play("pickup")
+		offer.clear()
+		return
+	_apply_card(player, offer[i])
+	offer.clear()
+	coop.local_picked = true
+	if coop.peer_picked:
+		_finish_upgrade()
+
+
+func _apply_card(ship: Node2D, id: String) -> void:
 	var info := card_info(id)
 	if id == "bonus":
 		score += 500 * wave
 	else:
-		player.add_upgrade(id)
-	fx.ring(player.position, 80, info["color"], 0.4)
-	fx.text(player.position, info["name"], info["color"])
+		ship.add_upgrade(id)
+	fx.ring(ship.position, 80, info["color"], 0.4)
+	fx.text(ship.position, info["name"], info["color"])
 	sfx.play("pickup")
-	offer.clear()
+
+
+## Host: the guest picked card i of its offer (-1: they left).
+func remote_pick(i: int) -> void:
+	if coop.peer_picked or state != State.UPGRADE:
+		return
+	var rp := remote_player()
+	if rp and i >= 0 and i < coop.peer_offer.size():
+		var me := player
+		player = rp
+		_apply_card(rp, coop.peer_offer[i])
+		player = me
+	coop.peer_picked = true
+	if coop.local_picked:
+		_finish_upgrade()
+
+
+func _finish_upgrade() -> void:
 	state = State.PLAYING
 	# Every upgrade also reshapes the arena; the extra pause covers the warn + rise.
-	var next: String = arena.shift_next()
-	hud.announce(t("arena_shift") % t("arena_" + next), Color(1, 0.85, 0.35))
+	if (wave + 1) % 5 == 0:
+		_shift_to_boss_arena(wave + 1)
+	else:
+		# Don't pick the coming boss's arena now, or the next shift would be skipped.
+		var next_boss := (wave / 5 + 1) * 5
+		var avoid: String = arena.BOSS_LAYOUTS[boss_type(next_boss)] if next_boss - wave <= 4 else ""
+		arena.shift_next(avoid)
+		hud.announce(t("arena_shift") % arena.display_name(), Color(1, 0.85, 0.35))
 	sfx.play("charge")
 	intermission = 2.6
+
+
+## Evolutions whose requirements are all met and that aren't owned yet.
+func ready_evolutions() -> Array[String]:
+	var out: Array[String] = []
+	for id in UPGRADES:
+		var d: Dictionary = UPGRADES[id]
+		if d["cat"] != "evo" or player.level(id) > 0:
+			continue
+		var ok := true
+		for r in d["req"]:
+			if player.level(r) < int(d["req"][r]):
+				ok = false
+		if ok:
+			out.append(id)
+	return out
+
+
+## "Evolves into X (needs A Lv3 + B)" lines for an upgrade that is part of a recipe.
+func evo_hint(id: String) -> String:
+	var lines: Array[String] = []
+	for ev in UPGRADES:
+		var d: Dictionary = UPGRADES[ev]
+		if d["cat"] != "evo" or not d["req"].has(id):
+			continue
+		var parts: Array[String] = []
+		for r in d["req"]:
+			var need := int(d["req"][r])
+			parts.append(t("up_" + r) + ("" if need <= 1 else " " + t("lv_short") % need))
+		lines.append(t("evo_hint") % [t("up_" + ev), " + ".join(parts)])
+	return "\n".join(lines)
+
+
+## REACTIVE ARMOR: the barrier bursts when it breaks.
+func reactive_blast(p: Vector2) -> void:
+	var dmg: float = 6.0 * player.damage_mult()
+	fx.ring(p, REACTIVE_RADIUS * 1.2, CAT_COLORS["evo"], 0.45)
+	fx.burst(p, CAT_COLORS["evo"], 30, 420, 3.5, 0.45)
+	sfx.play("shock")
+	arena.damage_blocks_in(p, REACTIVE_RADIUS, dmg)
+	for e in enemies:
+		if not e.dead and e.position.distance_to(p) < REACTIVE_RADIUS + e.radius:
+			var n: Vector2 = (e.position - p).normalized()
+			e.knock += n * 360.0 * minf(e.knock_scale, 1.0)
+			damage_enemy(e, dmg, Vector2.ZERO, true)
+	for b in bullets:
+		if not b.from_player and not b.dead and b.position.distance_to(p) < REACTIVE_RADIUS + 70.0:
+			b.dead = true
+
+
+## MAGSTORM: every pickup collected releases a pulse.
+func storm_pulse(p: Vector2) -> void:
+	var dmg: float = 4.0 * player.damage_mult()
+	fx.ring(p, STORM_RADIUS * 1.15, CAT_COLORS["evo"], 0.4)
+	sfx.play("shock")
+	arena.damage_blocks_in(p, STORM_RADIUS, dmg)
+	for e in enemies:
+		if not e.dead and e.position.distance_to(p) < STORM_RADIUS + e.radius:
+			damage_enemy(e, dmg, Vector2.ZERO, true)
+	for b in bullets:
+		if not b.from_player and not b.dead and b.position.distance_to(p) < STORM_RADIUS:
+			b.dead = true
 
 
 ## Display data for an upgrade card.
@@ -578,6 +1461,8 @@ func card_info(id: String) -> Dictionary:
 	var lvl := t("lv_new") if cur == 0 else t("lv_up") % [cur, cur + 1]
 	if int(d["max"]) == 1:
 		lvl = t("lv_unique")
+	if d["cat"] == "evo":
+		lvl = t("lv_evo")
 	return {"icon": id, "name": t("up_" + id), "desc": t("up_" + id + "_d"), "tag": t("cat_" + d["cat"]),
 		"color": CAT_COLORS[d["cat"]], "level": lvl}
 
@@ -654,6 +1539,9 @@ func load_settings() -> void:
 		lang = String(cfg.get_value("ui", "lang", default_lang))
 		muted = bool(cfg.get_value("audio", "muted", false))
 		touch_mode_setting = String(cfg.get_value("input", "touch_mode", "hybrid"))
+		shake_setting = String(cfg.get_value("video", "shake", "full"))
+		if not SHAKE_LEVELS.has(shake_setting):
+			shake_setting = "full"
 		AudioServer.set_bus_mute(0, muted)
 	else:
 		lang = default_lang
@@ -680,10 +1568,25 @@ func spawn_bullet(p: Vector2, v: Vector2, from_player: bool, dmg: float, r: floa
 func spawn_player_bullet(p: Vector2, v: Vector2, dmg: float, r: float, life: float, c: Color) -> void:
 	var b := spawn_bullet(p, v, true, dmg, r, c)
 	b.life = life
+	b.owner_ship = player
 	b.pierce = player.level("pierce")
 	b.bounce = player.level("bounce")
 	b.homing = player.level("homing") > 0
 	b.split = player.level("split") > 0
+	# Point-blank: bullets appear at the muzzle, so enemies pressed against the ship would be
+	# skipped. Check the stretch from the ship's centre to the muzzle once at spawn time.
+	var from: Vector2 = player.position
+	var near: Array = []
+	for e in enemies:
+		if not e.dead and e.position.distance_to(from) < e.radius + r + from.distance_to(p):
+			near.append(e)
+	near.sort_custom(func(a, c): return a.position.distance_squared_to(from) < c.position.distance_squared_to(from))
+	for e in near:
+		if b.dead:
+			break
+		var cp := Geometry2D.get_closest_point_to_segment(e.position, from, p)
+		if cp.distance_to(e.position) < e.radius + r:
+			_player_bullet_hits(b, cp)
 
 
 func _spawn_shards(p: Vector2, dir: Vector2, dmg: float, c: Color, hit_id: int) -> void:
@@ -723,12 +1626,18 @@ func _update_bullets(delta: float) -> void:
 			arena.damage_block(oi, b.damage if b.from_player else 1.0)
 			continue
 		if b.from_player:
+			var me := player
+			if b.owner_ship != null and is_instance_valid(b.owner_ship):
+				player = b.owner_ship
 			_player_bullet_hits(b, p)
-		elif state == State.PLAYING and not player.dead:
-			var rr2: float = player.radius * 0.7 + b.radius
-			if p.distance_squared_to(player.position) < rr2 * rr2:
-				if player.hurt(1):
-					b.dead = true
+			player = me
+		elif state == State.PLAYING:
+			for s in hurtable_players():
+				var rr2: float = s.radius * 0.7 + b.radius
+				if p.distance_squared_to(s.position) < rr2 * rr2:
+					if s.hurt(1):
+						b.dead = true
+						break
 
 
 func _player_bullet_hits(b: Node2D, p: Vector2) -> void:
@@ -879,8 +1788,14 @@ func hit_enemy(e: Node2D, dmg: float, dir: Vector2) -> void:
 func damage_enemy(e: Node2D, dmg: float, dir: Vector2, quiet := false) -> void:
 	if e.dead:
 		return
+	if e.is_boss and e.invulnerable():
+		if not quiet:
+			fx.burst(e.position - dir * e.radius, Color(1, 1, 1), 2, 120, 2.0, 0.15)
+		return
 	e.flash = 0.08
-	if e.shield > 0:
+	if e.stunned():
+		dmg *= EnemyScript.STUN_DAMAGE_MULT
+	if e.shield_blocks(dir):
 		e.shield -= dmg
 		e.knock += dir * 30.0
 		fx.burst(e.position - dir * e.radius, e.elite_color(), 3, 160, 2.0, 0.2)
@@ -890,7 +1805,7 @@ func damage_enemy(e: Node2D, dmg: float, dir: Vector2, quiet := false) -> void:
 		elif not quiet:
 			sfx.play("hit")
 		return
-	e.hp -= dmg
+	e.hp = e.boss_clamp(e.hp - dmg) if e.is_boss else e.hp - dmg
 	e.knock += dir * 90.0 * e.knock_scale
 	if not quiet:
 		fx.burst(e.position - dir * e.radius * 0.5, e.color, 4, 200, 2.5, 0.25)
@@ -947,6 +1862,25 @@ func kill_enemy(e: Node2D) -> void:
 			_drop(e.position, "rapid")
 
 
+## A boss crossed a phase threshold: clear the air, shove the player back, announce it.
+func boss_phase_change(e: Node2D) -> void:
+	for b in bullets:
+		if not b.from_player and not b.dead:
+			b.dead = true
+			fx.burst(b.position, b.color, 3, 90, 2.0, 0.25)
+	for s in hurtable_players():
+		var away: Vector2 = s.position - e.position
+		if away.length() < 260.0:
+			var n := away.normalized() if away.length() > 1.0 else Vector2.RIGHT
+			s.vel = n * 700.0
+			s.position = resolve_static(s.position + n * (260.0 - away.length()) * 0.5, s.radius)
+	fx.ring(e.position, 300, Color(1, 1, 1), 0.6)
+	fx.burst(e.position, e.color, 50, 480, 5.0, 0.9)
+	add_shake(16)
+	sfx.play("explode_big")
+	hud.announce(t("boss_phase") % e.boss_phase, e.color.lightened(0.3))
+
+
 ## Removes an enemy with no score (expired mines, leftovers at wave end).
 func fizzle(e: Node2D) -> void:
 	e.dead = true
@@ -966,9 +1900,10 @@ func explode(p: Vector2, r: float, enemy_dmg: float, hurt_player: bool) -> void:
 		var d: Vector2 = e.position - p
 		if d.length() < r + e.radius:
 			damage_enemy(e, enemy_dmg, d.normalized(), true)
-	if hurt_player and state == State.PLAYING and not player.dead:
-		if player.position.distance_to(p) < r + player.radius * 0.5:
-			player.hurt(1)
+	if hurt_player and state == State.PLAYING:
+		for s in hurtable_players():
+			if s.position.distance_to(p) < r + s.radius * 0.5:
+				s.hurt(1)
 
 
 ## SHOCKWAVE upgrade: fires when a dash ends.
@@ -996,16 +1931,22 @@ func shockwave(p: Vector2, lvl: int) -> void:
 
 ## FLAME DASH upgrade: burning points left along the dash path.
 func add_hazard(p: Vector2) -> void:
-	hazards.append({"p": p, "life": 1.4, "tick": 0.0})
+	hazards.append({"p": p, "life": INFERNO_LIFE if player.level("inferno") > 0 else 1.4, "tick": 0.0})
 
 
 func _update_hazards(delta: float) -> void:
 	if hazards.is_empty():
 		return
-	var dmg: float = 1.0 * player.damage_mult()
+	var inferno: bool = player.level("inferno") > 0
+	var dmg: float = (2.0 if inferno else 1.0) * player.damage_mult()
 	for h in hazards:
 		h["life"] -= delta
 		h["tick"] -= delta
+		if inferno:
+			var hp0: Vector2 = h["p"]
+			for e in enemies:
+				if not e.dead and not e.is_boss and hp0.distance_to(e.position) < 22.0 + e.radius:
+					e.slow_t = 0.3
 		if h["tick"] <= 0:
 			h["tick"] = 0.25
 			var hp: Vector2 = h["p"]
@@ -1024,16 +1965,20 @@ func _drop(p: Vector2, t: String) -> void:
 
 
 func _update_pickups(delta: float) -> void:
-	var reach: float = player.pickup_range()
+	var me := player
 	for pk in pickups:
 		if pk.dead:
 			continue
+		player = nearest_player(pk.position)  # the closest ship pulls and collects it
+		var reach: float = player.pickup_range()
 		pk.step(delta)
 		var d: float = pk.position.distance_to(player.position)
 		if d < reach:
 			pk.position = pk.position.move_toward(player.position, delta * maxf(520.0 - d * 2.5, 260.0))
 		if d < player.radius + 16:
 			pk.dead = true
+			if player.level("storm") > 0:
+				storm_pulse(player.position)
 			if pk.type == "heal":
 				player.hp = mini(player.hp + 2, player.max_hp)
 				fx.text(pk.position, "+HP", Color(0.4, 1, 0.5))
@@ -1044,6 +1989,7 @@ func _update_pickups(delta: float) -> void:
 			sfx.play("pickup")
 		elif pk.life <= 0:
 			pk.dead = true
+	player = me
 
 
 func _sweep() -> void:
@@ -1097,26 +2043,42 @@ func _obstacle_at(p: Vector2, r: float) -> int:
 
 
 func add_shake(amount: float) -> void:
-	shake = minf(maxf(shake, amount), 26.0)
+	var k: float = SHAKE_SCALE.get(shake_setting, 1.0) * (SHAKE_TOUCH if touch and touch.active else 1.0)
+	shake = minf(maxf(shake, amount * k), 26.0)
+
+
+func cycle_shake() -> void:
+	shake_setting = SHAKE_LEVELS[(SHAKE_LEVELS.find(shake_setting) + 1) % SHAKE_LEVELS.size()]
+	_save_setting("video", "shake", shake_setting)
+	sfx.play("card")
+	shake = 0.0
+	add_shake(10)  # a sample of the new strength
 
 
 func load_best() -> void:
-	if FileAccess.file_exists(SAVE_PATH):
+	var cfg := ConfigFile.new()
+	if cfg.load(BEST_PATH) == OK:
+		for c in bests:
+			bests[c] = int(cfg.get_value("best", c, 0))
+	elif FileAccess.file_exists(SAVE_PATH):
+		# Scores from before the split were all keyboard-and-mouse (or near enough).
 		var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
 		if f:
-			best = int(f.get_line())
+			bests["kbm"] = int(f.get_line())
+			save_best()
 
 
 func save_best() -> void:
-	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
-	if f:
-		f.store_line(str(best))
+	var cfg := ConfigFile.new()
+	for c in bests:
+		cfg.set_value("best", c, int(bests[c]))
+	cfg.save(BEST_PATH)
 
 
 # ---------------------------------------------------------------- arena drawing
 
 func _draw() -> void:
-	draw_rect(Rect2(-200, -200, W + 400, H + 400), Color(0.02, 0.02, 0.05))
+	draw_rect(Rect2(-2000, -1500, WORLD.x + 4000, WORLD.y + 3000), Color(0.02, 0.02, 0.05))
 	draw_rect(ARENA, Color(0.04, 0.045, 0.09))
 	var grid := Color(0.25, 0.3, 0.6, 0.12)
 	var x := ARENA.position.x

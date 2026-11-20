@@ -7,6 +7,9 @@ var sounds := {}
 var players: Array[AudioStreamPlayer] = []
 var next := 0
 var last_played := {}
+## Online co-op host: logged sound names, replayed on guests.
+var record := false
+var events: Array[String] = []
 
 
 func _ready() -> void:
@@ -37,6 +40,8 @@ func _ready() -> void:
 func play(name: String) -> void:
 	if not sounds.has(name):
 		return
+	if record and events.size() < 24:
+		events.append(name)
 	# Throttle very frequent sounds to avoid harsh stacking
 	var now := Time.get_ticks_msec()
 	var min_gap := 40 if name == "hit" else 25

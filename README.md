@@ -6,8 +6,17 @@ A neon top-down arena shooter made with Godot 4 (GL Compatibility). All visuals 
 
 | Version | Play | Source |
 |---|---|---|
-| **v2.1** (current) | https://mmmax21.github.io/Neon-Arena/v2/ | `main` branch, tag `v2.1` (v2.0: tag `v2.0`) |
+| **v2.2** (current) | https://mmmax21.github.io/Neon-Arena/v2/ | `main` branch, tag `v2.2` (earlier: tags `v2.1`, `v2.0`) |
 | v1.0 (original) | https://mmmax21.github.io/Neon-Arena/v1/ | `v1` branch, tag `v1.0` |
+
+## What's new in v2.2 (Season 1)
+
+- **Online leaderboards:** separate boards for PC / phone / tablet and each control mode, with all-time, weekly and daily views. Tap your name to rename. Season 1 starts here.
+- **Online co-op (2 players):** create a room, send the 4-letter code to a friend, pick weapons and go. Each pilot has their own build; a downed pilot returns when the wave is cleared.
+- **Bigger arena with a follow camera:** the arena is 1.4× larger; the camera leads toward your aim, and arrows on the screen edge point at enemies and spawn warnings off-screen
+- **Less crowding:** at most 22 enemies on the field (18 on touch screens) — the rest queue up — and enemies push apart instead of stacking
+- **Boss phases, evolution cards, wave pacing, smoother screen shake** with a reduce-shake setting
+- Server code (Cloudflare Workers + D1 + Durable Objects) is in `server/`
 
 ## What's new in v2.1
 
